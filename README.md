@@ -13,6 +13,22 @@ the default. Text size (⌘= / ⌘−) is a pure display preference.
 ```
 make run       # build, bundle, and launch dist/Write.app
 make install   # copy to /Applications
+make test      # headless editing-behavior tests
+```
+
+Requires only Xcode Command Line Tools (`swift` + `make`). The bundle picks
+up `Support/AppIcon.icns` automatically, so a fresh clone builds with the
+app icon in place.
+
+### App icon
+
+`Support/AppIcon.icns` is checked in and copied into the bundle by `make
+app`. To change the icon, replace `Support/AppIcon-source.png` (square PNG,
+1024×1024 recommended) and regenerate:
+
+```
+Support/make-icon.sh                 # from AppIcon-source.png
+Support/make-icon.sh path/to/my.png  # or from any PNG
 ```
 
 ## Editing
