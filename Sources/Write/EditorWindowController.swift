@@ -1,5 +1,37 @@
 import AppKit
 
+/// Text-field cell that displays and edits in the same rect: a borderless
+/// NSTextField otherwise insets the field editor slightly, so the title
+/// visibly shifts the moment editing begins.
+private final class StableTitleCell: NSTextFieldCell {
+
+    private func centeredRect(forBounds rect: NSRect) -> NSRect {
+        var r = super.titleRect(forBounds: rect)
+        let textHeight = cellSize(forBounds: rect).height
+        r.origin.y = rect.origin.y + (rect.height - textHeight) / 2
+        r.size.height = textHeight
+        return r
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        centeredRect(forBounds: rect)
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        super.drawInterior(withFrame: centeredRect(forBounds: cellFrame), in: controlView)
+    }
+
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: centeredRect(forBounds: rect), in: controlView,
+                   editor: textObj, delegate: delegate, event: event)
+    }
+
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: centeredRect(forBounds: rect), in: controlView,
+                     editor: textObj, delegate: delegate, start: selStart, length: selLength)
+    }
+}
+
 /// One editor window: its own tab set, text view, inline title, status line,
 /// and autosave. Menu actions reach the key window's controller through the
 /// responder chain.
@@ -59,6 +91,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         textView.delegate = self
 
         titleField = NSTextField(string: "")
+        let titleCell = StableTitleCell(textCell: "")
+        titleCell.isEditable = true
+        titleCell.isScrollable = true
+        titleField.cell = titleCell
+        titleField.isEditable = true
         titleField.isBordered = false
         titleField.drawsBackground = false
         titleField.focusRingType = .none
