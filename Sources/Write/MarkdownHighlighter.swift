@@ -26,6 +26,7 @@ final class MarkdownHighlighter {
     private let italicText = MarkdownHighlighter.regex(#"(?<![*\w])(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
     private let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
     private let linkText = MarkdownHighlighter.regex(#"\[([^\]\n]*)\]\(([^)\n]*)\)"#)
+    private let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
 
     private var isHighlighting = false
 
@@ -49,10 +50,11 @@ final class MarkdownHighlighter {
         }
     }
 
-    /// Restyles the whole document, then conceals every marker outside
-    /// `revealed` (the caret's paragraph) by shrinking it to a ~0pt font —
-    /// attribute-only concealment keeps TextKit layout fully consistent.
-    func highlight(_ textStorage: NSTextStorage, revealing revealed: NSRange) {
+    /// Restyles the whole document, then conceals every syntax marker by
+    /// shrinking it to a ~0pt font — WYSIWYG: the markdown stays in the file
+    /// but is never shown. Attribute-only concealment keeps TextKit layout
+    /// fully consistent.
+    func highlight(_ textStorage: NSTextStorage) {
         guard !isHighlighting else { return }
         isHighlighting = true
         defer { isHighlighting = false }
@@ -73,7 +75,7 @@ final class MarkdownHighlighter {
 
         let tiny = Theme.font(size: 0.1)
         textStorage.enumerateAttribute(.mdMarker, in: fullRange) { value, range, _ in
-            guard value != nil, NSIntersectionRange(range, revealed).length != range.length else { return }
+            guard value != nil else { return }
             textStorage.addAttribute(.font, value: tiny, range: range)
         }
         textStorage.endEditing()
@@ -178,6 +180,21 @@ final class MarkdownHighlighter {
             // Hide "[", then "](url)".
             mark(NSRange(location: r.location, length: 1))
             mark(NSRange(location: NSMaxRange(textRange), length: NSMaxRange(r) - NSMaxRange(textRange)))
+        }
+        // Applied last so an explicit color wins inside bold/italic runs.
+        colorSpan.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m else { return }
+            let r = global(m.range)
+            let contentRange = global(m.range(at: 2))
+            if let color = NSColor(hexString: (line as NSString).substring(with: m.range(at: 1))) {
+                ts.addAttribute(.foregroundColor, value: color, range: contentRange)
+            }
+            let openTag = NSRange(location: r.location, length: contentRange.location - r.location)
+            let closeTag = NSRange(location: NSMaxRange(contentRange), length: NSMaxRange(r) - NSMaxRange(contentRange))
+            for tag in [openTag, closeTag] {
+                ts.addAttribute(.foregroundColor, value: Theme.dim, range: tag)
+                mark(tag)
+            }
         }
     }
 }

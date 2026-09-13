@@ -7,9 +7,6 @@ final class EditorTextView: NSTextView {
 
     private let highlighter = MarkdownHighlighter()
 
-    /// The paragraph(s) the selection touches: markers stay visible here.
-    private var revealedRange = NSRange(location: 0, length: 0)
-
     /// Extra space above the text for the inline document title. The inset
     /// carries half of it, and the origin shift moves that half to the top,
     /// so the bottom keeps the plain padding.
@@ -50,8 +47,7 @@ final class EditorTextView: NSTextView {
     }
 
     func rehighlight() {
-        revealedRange = currentParagraphRange()
-        if let textStorage { highlighter.highlight(textStorage, revealing: revealedRange) }
+        if let textStorage { highlighter.highlight(textStorage) }
         typingAttributes = Theme.baseAttributes
     }
 
@@ -60,17 +56,107 @@ final class EditorTextView: NSTextView {
         rehighlight()
     }
 
-    // MARK: - Live preview: hide syntax markers off the active paragraph
+    // MARK: - WYSIWYG: the caret skips concealed markers
 
-    private func currentParagraphRange() -> NSRange {
-        let ns = string as NSString
-        return ns.length == 0
-            ? NSRange(location: 0, length: 0)
-            : ns.paragraphRange(for: selectedRange())
+    /// The full run of concealed marker characters containing `index`.
+    private func concealedRun(containing index: Int) -> NSRange? {
+        guard let textStorage, index >= 0, index < textStorage.length else { return nil }
+        var effective = NSRange()
+        let full = NSRange(location: 0, length: textStorage.length)
+        guard textStorage.attribute(.mdMarker, at: index,
+                                    longestEffectiveRange: &effective, in: full) != nil else { return nil }
+        return effective
     }
 
+    private var navigating = false
+
+    override func moveLeft(_ sender: Any?) {
+        navigating = true
+        defer { navigating = false }
+        super.moveLeft(sender)
+        let caret = selectedRange().location
+        if let run = concealedRun(containing: caret), caret > run.location {
+            setSelectedRange(NSRange(location: run.location, length: 0))
+        }
+    }
+
+    override func moveRight(_ sender: Any?) {
+        navigating = true
+        defer { navigating = false }
+        super.moveRight(sender)
+        let caret = selectedRange().location
+        if caret > 0, let run = concealedRun(containing: caret - 1), caret < NSMaxRange(run) {
+            setSelectedRange(NSRange(location: NSMaxRange(run), length: 0))
+        }
+    }
+
+    /// Clicks and vertical movement can land the caret inside a concealed
+    /// run; snap it to the nearer edge.
     @objc private func selectionChanged() {
-        if currentParagraphRange() != revealedRange { rehighlight() }
+        guard !navigating else { return }
+        let sel = selectedRange()
+        guard sel.length == 0, sel.location > 0 else { return }
+        guard let run = concealedRun(containing: sel.location),
+              sel.location > run.location,
+              let leftRun = concealedRun(containing: sel.location - 1),
+              leftRun == run else { return }
+        let snapped = (sel.location - run.location <= NSMaxRange(run) - sel.location)
+            ? run.location : NSMaxRange(run)
+        setSelectedRange(NSRange(location: snapped, length: 0))
+    }
+
+    override func deleteBackward(_ sender: Any?) {
+        let sel = selectedRange()
+        guard sel.length == 0, sel.location > 0,
+              let run = concealedRun(containing: sel.location - 1) else {
+            super.deleteBackward(sender)
+            return
+        }
+        let ns = string as NSString
+        let paragraph = ns.paragraphRange(for: sel)
+        if run.location == paragraph.location {
+            // A concealed block marker (e.g. a heading's "# ") at the start
+            // of the paragraph: backspace un-formats the block, Notion-style.
+            insertText("", replacementRange: run)
+            return
+        }
+        // Delete the nearest visible character to the left of the run.
+        var index = run.location - 1
+        while index >= 0, let outer = concealedRun(containing: index) {
+            if outer.location == paragraph.location {
+                insertText("", replacementRange: NSRange(location: outer.location, length: NSMaxRange(run) - outer.location))
+                return
+            }
+            index = outer.location - 1
+        }
+        guard index >= 0 else {
+            super.deleteBackward(sender)
+            return
+        }
+        let charRange = ns.rangeOfComposedCharacterSequence(at: index)
+        insertText("", replacementRange: charRange)
+    }
+
+    override func deleteForward(_ sender: Any?) {
+        let sel = selectedRange()
+        let ns = string as NSString
+        guard sel.length == 0, sel.location < ns.length,
+              let run = concealedRun(containing: sel.location) else {
+            super.deleteForward(sender)
+            return
+        }
+        // Delete the nearest visible character to the right of the run.
+        var index = NSMaxRange(run)
+        while index < ns.length, let outer = concealedRun(containing: index) {
+            index = NSMaxRange(outer)
+        }
+        guard index < ns.length else {
+            super.deleteForward(sender)
+            return
+        }
+        let charRange = ns.rangeOfComposedCharacterSequence(at: index)
+        insertText("", replacementRange: charRange)
+        setSelectedRange(NSRange(location: sel.location, length: 0))
     }
 
     // MARK: - Slash commands
@@ -232,6 +318,81 @@ final class EditorTextView: NSTextView {
     @objc func toggleItalicMD(_ sender: Any?) { toggleInline("*") }
     @objc func toggleCodeMD(_ sender: Any?) { toggleInline("`") }
 
+    /// Trims surrounding whitespace/newlines out of a range: a triple-clicked
+    /// line includes its trailing newline, which would put a closing
+    /// delimiter on the next line.
+    private func trimmedToContent(_ range: NSRange) -> NSRange {
+        let ns = string as NSString
+        var sel = range
+        let whitespace = CharacterSet.whitespacesAndNewlines
+        while sel.length > 0,
+              let scalar = Unicode.Scalar(ns.character(at: sel.location)),
+              whitespace.contains(scalar) {
+            sel.location += 1
+            sel.length -= 1
+        }
+        while sel.length > 0,
+              let scalar = Unicode.Scalar(ns.character(at: NSMaxRange(sel) - 1)),
+              whitespace.contains(scalar) {
+            sel.length -= 1
+        }
+        return sel
+    }
+
+    // MARK: - Text color (serialized as inline HTML spans)
+
+    private static let fullColorSpan = try! NSRegularExpression(
+        pattern: #"^<span style="color:#([0-9A-Fa-f]{6})">(.*)</span>$"#,
+        options: [.dotMatchesLineSeparators])
+    private static let trailingOpenTag = try! NSRegularExpression(
+        pattern: #"<span style="color:#([0-9A-Fa-f]{6})">$"#)
+
+    /// Wraps the selection in a color span; reapplying the same color
+    /// removes it, a different color replaces it.
+    func applyColor(hex: String) {
+        let ns = string as NSString
+        let sel = trimmedToContent(selectedRange())
+        guard sel.length > 0 else { return }
+        let selected = ns.substring(with: sel)
+        let selNS = selected as NSString
+        let openTag = "<span style=\"color:#\(hex)\">"
+        let closeLen = ("</span>" as NSString).length
+
+        // Selection includes the tags: swap the color or unwrap.
+        if let m = Self.fullColorSpan.firstMatch(in: selected, range: NSRange(location: 0, length: selNS.length)) {
+            let currentHex = selNS.substring(with: m.range(at: 1))
+            let inner = selNS.substring(with: m.range(at: 2))
+            let replacement = currentHex.caseInsensitiveCompare(hex) == .orderedSame
+                ? inner
+                : "<span style=\"color:#\(hex)\">\(inner)</span>"
+            insertText(replacement, replacementRange: sel)
+            setSelectedRange(NSRange(location: sel.location, length: (replacement as NSString).length))
+            return
+        }
+
+        // Selection is the inner text of a surrounding span.
+        let lookbackLength = min(40, sel.location)
+        let before = ns.substring(with: NSRange(location: sel.location - lookbackLength, length: lookbackLength))
+        if let m = Self.trailingOpenTag.firstMatch(in: before, range: NSRange(location: 0, length: (before as NSString).length)),
+           NSMaxRange(sel) + closeLen <= ns.length,
+           ns.substring(with: NSRange(location: NSMaxRange(sel), length: closeLen)) == "</span>" {
+            let tagLength = m.range.length
+            let currentHex = (before as NSString).substring(with: m.range(at: 1))
+            let outer = NSRange(location: sel.location - tagLength, length: tagLength + sel.length + closeLen)
+            if currentHex.caseInsensitiveCompare(hex) == .orderedSame {
+                insertText(selected, replacementRange: outer)
+                setSelectedRange(NSRange(location: outer.location, length: sel.length))
+            } else {
+                insertText(openTag + selected + "</span>", replacementRange: outer)
+                setSelectedRange(NSRange(location: outer.location + (openTag as NSString).length, length: sel.length))
+            }
+            return
+        }
+
+        insertText(openTag + selected + "</span>", replacementRange: sel)
+        setSelectedRange(NSRange(location: sel.location + (openTag as NSString).length, length: sel.length))
+    }
+
     private func toggleInline(_ delimiter: String) {
         let ns = string as NSString
         let dLen = (delimiter as NSString).length
@@ -246,6 +407,7 @@ final class EditorTextView: NSTextView {
             }
         }
 
+        sel = trimmedToContent(sel)
         let selected = ns.substring(with: sel)
 
         if selected.hasPrefix(delimiter), selected.hasSuffix(delimiter), (selected as NSString).length >= 2 * dLen {

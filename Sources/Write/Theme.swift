@@ -1,6 +1,12 @@
 import AppKit
 
 extension NSColor {
+    convenience init?(hexString: String) {
+        var value: UInt64 = 0
+        guard Scanner(string: hexString).scanHexInt64(&value), value <= 0xFFFFFF else { return nil }
+        self.init(hex: UInt32(value))
+    }
+
     convenience init(hex: UInt32, alpha: CGFloat = 1.0) {
         self.init(
             srgbRed: CGFloat((hex >> 16) & 0xFF) / 255.0,
@@ -17,7 +23,7 @@ enum Theme {
     static let backgroundOpacity: CGFloat = 0.60
 
     static let foreground = NSColor(hex: 0x63D0FF)
-    static let bold = NSColor(hex: 0xA4BEEF)
+    static let bold = NSColor(hex: 0xFFFFFF)
     static let heading = NSColor(hex: 0xA4BEEF)
     static let italic = NSColor(hex: 0xD7E0FF)
     static let code = NSColor(hex: 0x55E6A5)
@@ -33,6 +39,19 @@ enum Theme {
     static let padding: CGFloat = 28
     /// Modern macOS window rounding; the tab strip inset follows it.
     static let windowCornerRadius: CGFloat = 26
+
+    /// Text colors offered by the selection toolbar. Serialized to markdown
+    /// as inline HTML spans, so files stay portable.
+    static let accentColors: [(name: String, hex: String)] = [
+        ("Blue", "72A7FF"),
+        ("Red", "FF5C5C"),
+        ("Green", "55E6A5"),
+        ("Lavender", "BF8EE8"),
+        ("Orange", "FF9F45"),
+        ("Dandelion", "FFD166"),
+        ("Leaf Green", "86C56A"),
+        ("Coral", "FF8A7A"),
+    ]
     /// Prose column cap: about half a MacBook screen minus 80pt padding per
     /// side. Past this the window just grows its horizontal padding.
     static let maxTextWidth: CGFloat = 720

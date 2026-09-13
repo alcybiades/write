@@ -21,6 +21,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private var titleView: NSTextView!
     private var titleReverting = false
     private let titleUndoManager = UndoManager()
+    private static let metricsLayoutManager = NSLayoutManager()
+    private var selectionToolbar: SelectionToolbar!
     private var autosaveTimer: Timer?
     private var savedFlashTimer: Timer?
 
@@ -62,6 +64,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         textView.isHorizontallyResizable = false
         textView.configure()
         textView.delegate = self
+        selectionToolbar = SelectionToolbar(textView: textView)
 
         titleView = NSTextView(frame: .zero)
         titleView.drawsBackground = false
@@ -74,7 +77,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         // Single visual line: a huge fixed container width, clipped by frame.
         titleView.textContainer?.widthTracksTextView = false
         titleView.textContainer?.size = NSSize(width: 10000, height: 10000)
-        titleView.textColor = Theme.heading
+        titleView.textColor = NSColor.white.withAlphaComponent(0.5)
         titleView.insertionPointColor = Theme.cursor
         titleView.selectedTextAttributes = [
             .backgroundColor: Theme.selection,
@@ -132,6 +135,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             self, selector: #selector(viewResized),
             name: NSView.frameDidChangeNotification, object: textView)
         textView.postsFrameChangedNotifications = true
+        // Keep the selection toolbar tracking the text as it scrolls.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(scrolled),
+            name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
 
         // Upper-center placement, like TextEdit/Notes opening a document.
         if let screen = NSScreen.main {
@@ -155,20 +163,36 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     func windowWillClose(_ notification: Notification) {
         autosaveTimer?.invalidate()
         savedFlashTimer?.invalidate()
+        selectionToolbar.teardown()
         NotificationCenter.default.removeObserver(self)
         app?.windowClosed(self)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        selectionToolbar.hide()
     }
 
     @objc private func viewResized() {
         updateInsets()
     }
 
+    @objc private func scrolled() {
+        selectionToolbar.noteSelectionChanged()
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        guard (notification.object as? NSTextView) === textView else { return }
+        selectionToolbar.noteSelectionChanged()
+    }
+
     private func updateInsets() {
         let titleFont = Theme.boldFont(size: Theme.fontSize * 1.5).font
         let titleHeight = ceil(titleFont.ascender - titleFont.descender) + 6
-        // Double padding above the title; the gap beneath it stays put.
-        let titleTop = Theme.padding * 2
-        let extraTop = (titleTop - Theme.padding) + titleHeight + Theme.fontSize * 0.9
+        // Symmetric breathing room: the gap above the title (below the tab
+        // bar) equals the gap between the title and the body text.
+        let titleGap = Theme.fontSize * 0.9
+        let titleTop = titleGap
+        let extraTop = (titleTop - Theme.padding) + titleHeight + titleGap
 
         let available = textView.bounds.width
         let horizontal = max(Theme.padding, (available - Theme.maxTextWidth) / 2)
@@ -181,11 +205,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         }
 
         titleView.font = titleFont
+        // NSTextView can seat the first baseline lower than static text
+        // drawing does (e.g. Hoefler: 31pt from fragment top vs a 23.8pt
+        // ascender). Raise the frame by that difference so the title sits
+        // where the ascender-based layout puts it.
+        let baselineDelta = max(0, Self.metricsLayoutManager.defaultBaselineOffset(for: titleFont) - titleFont.ascender)
         titleView.frame = NSRect(
             x: horizontal + 5,
-            y: titleTop,
+            y: titleTop - baselineDelta,
             width: max(120, available - 2 * horizontal - 10),
-            height: titleHeight
+            height: titleHeight + baselineDelta + 4
         )
     }
 

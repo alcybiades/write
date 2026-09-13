@@ -54,6 +54,45 @@ tv = makeTV("hello world", caret: 8)
 tv.toggleBoldMD(nil)
 check("bold word at caret", tv.string, "hello **world**")
 
+// Full-line selection includes the trailing newline; delimiters must hug
+// the text, not spill onto the next line.
+tv = makeTV("whole line\nnext", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 11))
+tv.toggleBoldMD(nil)
+check("bold full line trims newline", tv.string, "**whole line**\nnext")
+
+tv = makeTV("  padded selection  ", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 20))
+tv.toggleBoldMD(nil)
+check("bold trims spaces", tv.string, "  **padded selection**  ")
+
+// Color spans: apply, swap, and remove by reapplying.
+tv = makeTV("color me", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 8))
+tv.applyColor(hex: "FF5C5C")
+check("color wrap", tv.string, "<span style=\"color:#FF5C5C\">color me</span>")
+tv.applyColor(hex: "72A7FF")
+check("color swap", tv.string, "<span style=\"color:#72A7FF\">color me</span>")
+tv.applyColor(hex: "72A7FF")
+check("color remove on reapply", tv.string, "color me")
+
+// WYSIWYG deletion: backspace after concealed markers removes the visible
+// character, not invisible syntax; at a heading start it un-formats.
+tv = makeTV("see **bold**", caret: 12)
+tv.rehighlight()
+tv.deleteBackward(nil)
+check("backspace skips hidden delimiters", tv.string, "see **bol**")
+
+tv = makeTV("# Title", caret: 2)
+tv.rehighlight()
+tv.deleteBackward(nil)
+check("backspace at heading start unformats", tv.string, "Title")
+
+tv = makeTV("**bold** tail", caret: 0)
+tv.rehighlight()
+tv.deleteForward(nil)
+check("forward delete skips hidden delimiters", tv.string, "**old** tail")
+
 tv = makeTV("Title line", caret: 3)
 let item = NSMenuItem(); item.tag = 2
 tv.setHeading(item)
