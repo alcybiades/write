@@ -23,6 +23,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private let titleUndoManager = UndoManager()
     private var autosaveTimer: Timer?
     private var savedFlashTimer: Timer?
+    private var lastAutosave = Date()
 
     init(documents: [Document] = [], app: AppDelegate?) {
         self.documents = documents.isEmpty ? [Document()] : documents
@@ -292,19 +293,38 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     private func scheduleAutosave() {
-        guard currentDocument.url != nil else { return }
         autosaveTimer?.invalidate()
+        // Continuous typing keeps resetting the debounce; don't let more than
+        // ten seconds of work sit only in memory.
+        if Date().timeIntervalSince(lastAutosave) > 10 {
+            autosaveNow()
+            return
+        }
         autosaveTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
-            self?.saveCurrentDocument()
+            self?.autosaveNow()
+        }
+    }
+
+    /// Named documents save to their file; untitled buffers (and failed
+    /// saves) mirror to the recovery store instead.
+    private func autosaveNow() {
+        lastAutosave = Date()
+        autosaveTimer?.invalidate()
+        autosaveTimer = nil
+        let doc = currentDocument
+        guard doc.edited else { return }
+        if doc.url != nil {
+            if !saveCurrentDocument() { RecoveryStore.write(doc) }
+        } else {
+            RecoveryStore.write(doc)
         }
     }
 
     private func flushAutosave() {
         autosaveTimer?.invalidate()
         autosaveTimer = nil
-        if documents.indices.contains(current), currentDocument.url != nil, currentDocument.edited {
-            saveCurrentDocument()
-        }
+        guard documents.indices.contains(current) else { return }
+        autosaveNow()
     }
 
     private func updateStatus() {
@@ -360,6 +380,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         }
         guard let url = doc.url else {
             doc.customTitle = title
+            if doc.edited { RecoveryStore.write(doc) }
             refreshChrome()
             return
         }
@@ -398,7 +419,21 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             return false
         }
         app?.addRecentFile(url)
-        let doc = Document(url: url, content: content)
+        let doc: Document
+        // A surviving draft means edits never reached the file (crash before
+        // the debounce fired, or a failed write): prefer the draft.
+        if let draft = RecoveryStore.draft(forPath: url.path) {
+            if draft.content != content {
+                doc = Document(url: url, content: draft.content)
+                doc.recoveryID = draft.id
+                doc.edited = true
+            } else {
+                RecoveryStore.remove(id: draft.id)
+                doc = Document(url: url, content: content)
+            }
+        } else {
+            doc = Document(url: url, content: content)
+        }
         // Reuse the current tab when it's an empty, untouched untitled buffer.
         if currentDocument.url == nil, !currentDocument.edited, currentDocument.storage.length == 0 {
             documents[current] = doc
@@ -408,6 +443,45 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             switchTab(to: documents.count - 1)
         }
         return true
+    }
+
+    /// Reopens a draft left behind by a crashed or quit session as a tab.
+    func adoptRecoveredDraft(_ entry: RecoveryStore.Entry) {
+        let doc = Document(content: entry.content)
+        doc.customTitle = entry.title
+        doc.recoveryID = entry.id
+        doc.edited = true
+        // Reuse the current tab when it's an empty, untouched untitled buffer.
+        if currentDocument.url == nil, !currentDocument.edited, currentDocument.storage.length == 0 {
+            documents[current] = doc
+            switchTab(to: current)
+        } else {
+            documents.append(doc)
+            switchTab(to: documents.count - 1)
+        }
+    }
+
+    /// Quit-time flush: named documents save to their files, untitled buffers
+    /// land in the recovery store to be restored next launch. Returns false
+    /// when a draft could not be persisted (caller should fall back to the
+    /// save/discard prompt).
+    func persistAllDrafts() -> Bool {
+        commitTitleIfEditing()
+        autosaveTimer?.invalidate()
+        autosaveTimer = nil
+        var ok = true
+        for doc in documents where doc.edited {
+            if let url = doc.url,
+               (try? doc.storage.string.write(to: url, atomically: true, encoding: .utf8)) != nil {
+                doc.edited = false
+                RecoveryStore.remove(doc)
+            } else if doc.storage.length > 0 || doc.url != nil {
+                ok = RecoveryStore.write(doc) && ok
+            } else {
+                RecoveryStore.remove(doc)  // emptied untitled buffer: nothing to keep
+            }
+        }
+        return ok
     }
 
     func focus(url: URL) -> Bool {
@@ -461,6 +535,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         do {
             try doc.storage.string.write(to: url, atomically: true, encoding: .utf8)
             doc.edited = false
+            RecoveryStore.remove(doc)
             window?.isDocumentEdited = false
             refreshChrome()
             return true
@@ -489,6 +564,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             saveCurrentDocument()
             return true
         case .alertSecondButtonReturn:
+            RecoveryStore.remove(doc)
             return true
         default:
             return false

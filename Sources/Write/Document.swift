@@ -9,6 +9,8 @@ final class Document {
     var edited = false
     /// Title chosen before the document has a file (used as the save name).
     var customTitle: String?
+    /// Names this buffer's crash-recovery draft across launches.
+    var recoveryID = UUID()
 
     init(url: URL? = nil, content: String = "") {
         self.url = url

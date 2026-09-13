@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for path in cliFiles { controller.open(url: URL(fileURLWithPath: path)) }
         } else {
             restoreSession(savedWindows)
+            restoreRecoveredDrafts()
             if controllers.isEmpty { makeWindow() }
         }
 
@@ -65,7 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        for controller in controllers {
+        // Quit never prompts: named documents flush to their files, untitled
+        // buffers persist as recovery drafts and reappear next launch. Only
+        // if a draft cannot be written do we fall back to save/discard.
+        for controller in controllers where !controller.persistAllDrafts() {
             guard controller.resolveAllUnsavedChanges() else { return .terminateCancel }
         }
         if !controllers.isEmpty { sessionChanged() }
@@ -229,6 +233,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard !paths.isEmpty else { return }
             let controller = makeWindow()
             for path in paths { controller.open(url: URL(fileURLWithPath: path)) }
+        }
+    }
+
+    /// Reopens drafts the previous run left behind (crash, force-quit, or a
+    /// quit with untitled buffers). Session restore has already run, so named
+    /// files that are open again picked their drafts up in open(url:).
+    private func restoreRecoveredDrafts() {
+        for entry in RecoveryStore.loadAll() {
+            if let path = entry.path {
+                let url = URL(fileURLWithPath: path)
+                let isOpen = controllers.contains { c in c.documents.contains { $0.url == url } }
+                guard !isOpen else { continue }
+                if FileManager.default.fileExists(atPath: path) {
+                    (keyController ?? makeWindow()).open(url: url)
+                } else if !entry.content.isEmpty {
+                    // The file vanished; keep the words as an untitled draft.
+                    var orphan = entry
+                    orphan.path = nil
+                    orphan.title = url.deletingPathExtension().lastPathComponent
+                    (keyController ?? makeWindow()).adoptRecoveredDraft(orphan)
+                } else {
+                    RecoveryStore.remove(id: entry.id)
+                }
+            } else if entry.content.isEmpty {
+                RecoveryStore.remove(id: entry.id)
+            } else {
+                (keyController ?? makeWindow()).adoptRecoveredDraft(entry)
+            }
         }
     }
 
