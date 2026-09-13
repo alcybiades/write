@@ -1,41 +1,9 @@
 import AppKit
 
-/// Text-field cell that displays and edits in the same rect: a borderless
-/// NSTextField otherwise insets the field editor slightly, so the title
-/// visibly shifts the moment editing begins.
-private final class StableTitleCell: NSTextFieldCell {
-
-    private func centeredRect(forBounds rect: NSRect) -> NSRect {
-        var r = super.titleRect(forBounds: rect)
-        let textHeight = cellSize(forBounds: rect).height
-        r.origin.y = rect.origin.y + (rect.height - textHeight) / 2
-        r.size.height = textHeight
-        return r
-    }
-
-    override func titleRect(forBounds rect: NSRect) -> NSRect {
-        centeredRect(forBounds: rect)
-    }
-
-    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        super.drawInterior(withFrame: centeredRect(forBounds: cellFrame), in: controlView)
-    }
-
-    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
-        super.edit(withFrame: centeredRect(forBounds: rect), in: controlView,
-                   editor: textObj, delegate: delegate, event: event)
-    }
-
-    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
-        super.select(withFrame: centeredRect(forBounds: rect), in: controlView,
-                     editor: textObj, delegate: delegate, start: selStart, length: selLength)
-    }
-}
-
 /// One editor window: its own tab set, text view, inline title, status line,
 /// and autosave. Menu actions reach the key window's controller through the
 /// responder chain.
-final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate {
+final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
 
     private(set) var documents: [Document]
     private(set) var current = 0
@@ -47,7 +15,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private var scrollView: NSScrollView!
     private var tabBar: TabBarView!
     private var statusLabel: NSTextField!
-    private var titleField: NSTextField!
+    // The inline title is an always-editable NSTextView: one view for both
+    // reading and editing means the glyphs cannot shift when editing starts
+    // (NSTextField swaps in a field editor with subtly different metrics).
+    private var titleView: NSTextView!
+    private var titleReverting = false
+    private let titleUndoManager = UndoManager()
     private var autosaveTimer: Timer?
     private var savedFlashTimer: Timer?
 
@@ -90,23 +63,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         textView.configure()
         textView.delegate = self
 
-        titleField = NSTextField(string: "")
-        let titleCell = StableTitleCell(textCell: "")
-        titleCell.isEditable = true
-        titleCell.isScrollable = true
-        titleField.cell = titleCell
-        titleField.isEditable = true
-        titleField.isBordered = false
-        titleField.drawsBackground = false
-        titleField.focusRingType = .none
-        titleField.textColor = Theme.heading
-        titleField.placeholderString = "untitled"
-        titleField.lineBreakMode = .byTruncatingTail
-        titleField.usesSingleLineMode = true
-        titleField.delegate = self
-        titleField.target = self
-        titleField.action = #selector(titleCommitted(_:))
-        textView.addSubview(titleField)
+        titleView = NSTextView(frame: .zero)
+        titleView.drawsBackground = false
+        titleView.isRichText = false
+        titleView.allowsUndo = true
+        titleView.isVerticallyResizable = false
+        titleView.isHorizontallyResizable = false
+        titleView.textContainerInset = .zero
+        titleView.textContainer?.lineFragmentPadding = 0
+        // Single visual line: a huge fixed container width, clipped by frame.
+        titleView.textContainer?.widthTracksTextView = false
+        titleView.textContainer?.size = NSSize(width: 10000, height: 10000)
+        titleView.textColor = Theme.heading
+        titleView.insertionPointColor = Theme.cursor
+        titleView.selectedTextAttributes = [
+            .backgroundColor: Theme.selection,
+            .foregroundColor: NSColor(hex: 0xF8FAFC),
+        ]
+        titleView.delegate = self
+        textView.addSubview(titleView)
 
         scrollView = NSScrollView()
         scrollView.drawsBackground = false
@@ -205,8 +180,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             textView.textContainerInset = newInset
         }
 
-        titleField.font = titleFont
-        titleField.frame = NSRect(
+        titleView.font = titleFont
+        titleView.frame = NSRect(
             x: horizontal + 5,
             y: titleTop,
             width: max(120, available - 2 * horizontal - 10),
@@ -305,6 +280,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     // MARK: - Text changes → autosave + status
 
     func textDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTextView) === textView else { return }
         currentDocument.edited = true
         window?.isDocumentEdited = true
         refreshChrome()
@@ -312,7 +288,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? {
-        currentDocument.undoManager
+        view === titleView ? titleUndoManager : currentDocument.undoManager
     }
 
     private func scheduleAutosave() {
@@ -336,34 +312,50 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             .split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
         statusLabel.stringValue = "\(currentDocument.name) · \(words)w"
         window?.title = currentDocument.name
-        if titleField.currentEditor() == nil {
-            titleField.stringValue = currentDocument.displayTitle
+        if window?.firstResponder !== titleView {
+            titleView.string = currentDocument.displayTitle
         }
     }
 
     // MARK: - Inline title → file rename
 
     private func commitTitleIfEditing() {
-        guard titleField.currentEditor() != nil else { return }
-        applyTitle(titleField.stringValue)
-        window?.makeFirstResponder(textView)
+        guard window?.firstResponder === titleView else { return }
+        window?.makeFirstResponder(textView)  // textDidEndEditing commits
     }
 
-    @objc private func titleCommitted(_ sender: NSTextField) {
-        applyTitle(sender.stringValue)
-        window?.makeFirstResponder(textView)
+    func textDidEndEditing(_ notification: Notification) {
+        guard (notification.object as? NSTextView) === titleView else { return }
+        if titleReverting {
+            titleReverting = false
+        } else {
+            applyTitle(titleView.string)
+        }
+        titleView.string = currentDocument.displayTitle
     }
 
-    func controlTextDidEndEditing(_ obj: Notification) {
-        guard (obj.object as? NSTextField) === titleField else { return }
-        applyTitle(titleField.stringValue)
+    func textView(_ view: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard view === titleView else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+            window?.makeFirstResponder(textView)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            titleReverting = true
+            window?.makeFirstResponder(textView)
+            return true
+        default:
+            return false
+        }
     }
 
     private func applyTitle(_ rawTitle: String) {
         let doc = currentDocument
-        let title = rawTitle.trimmingCharacters(in: .whitespaces)
+        let title = rawTitle
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, !title.contains("/"), title != doc.displayTitle else {
-            titleField.stringValue = doc.displayTitle
+            titleView.string = doc.displayTitle
             return
         }
         guard let url = doc.url else {
@@ -381,7 +373,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             app?.recentFileRenamed(from: url, to: newURL)
         } catch {
             NSSound.beep()
-            titleField.stringValue = doc.displayTitle
+            titleView.string = doc.displayTitle
         }
         refreshChrome()
     }
