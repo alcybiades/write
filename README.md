@@ -1,5 +1,7 @@
 # Write
 
+![Write — a translucent terminal-styled markdown editor for macOS](docs/write.png)
+
 A minimalist native macOS markdown editor with the Neon Noir WezTerm aesthetic:
 `#141414` at exactly 0.60 opacity over a window-server background blur (radius
 30, the same CGS call WezTerm uses for `macos_window_background_blur`), the
