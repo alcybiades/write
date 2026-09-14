@@ -30,15 +30,34 @@ final class MarkdownHighlighter {
 
     private var isHighlighting = false
 
+    /// Extra width added (via kerning) to the space after a list/quote
+    /// marker so the gap is a consistent half-em. Proportional fonts have
+    /// narrow spaces (~0.25em in Hoefler), which makes the gap after a
+    /// bullet look cramped; monospace fonts need no correction.
+    private var markerKern: CGFloat = 0
+
+    private func computeMarkerKern() -> CGFloat {
+        let spaceWidth = (" " as NSString).size(withAttributes: [.font: Theme.baseFont]).width
+        return max(0, Theme.fontSize * 0.5 - spaceWidth)
+    }
+
     /// List/quote lines get a base indent, and their wrapped lines align
-    /// with the text after the marker (a hanging indent).
+    /// with the text after the marker (a hanging indent, including the
+    /// widened marker gap).
     private func hangingIndentStyle(prefix: String) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = Theme.lineHeightMultiple
         let baseIndent = Theme.fontSize
         style.firstLineHeadIndent = baseIndent
-        style.headIndent = baseIndent + (prefix as NSString).size(withAttributes: [.font: Theme.baseFont]).width
+        style.headIndent = baseIndent + markerKern
+            + (prefix as NSString).size(withAttributes: [.font: Theme.baseFont]).width
         return style
+    }
+
+    /// Widens the marker's trailing space via kerning.
+    private func widenMarkerGap(_ ts: NSTextStorage, markerRange: NSRange) {
+        guard markerKern > 0.1 else { return }
+        ts.addAttribute(.kern, value: markerKern, range: NSRange(location: NSMaxRange(markerRange) - 1, length: 1))
     }
 
     private func headingScale(_ level: Int) -> CGFloat {
@@ -61,6 +80,7 @@ final class MarkdownHighlighter {
 
         let text = textStorage.string as NSString
         let fullRange = NSRange(location: 0, length: text.length)
+        markerKern = computeMarkerKern()
 
         textStorage.beginEditing()
         textStorage.setAttributes(Theme.baseAttributes, range: fullRange)
@@ -120,15 +140,19 @@ final class MarkdownHighlighter {
             ts.addAttribute(.foregroundColor, value: Theme.quote, range: lineRange)
             ts.addAttribute(.foregroundColor, value: Theme.dim, range: global(m.range))
             ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = task.firstMatch(in: line, range: localRange) {
             ts.addAttribute(.foregroundColor, value: Theme.listMarker, range: global(m.range))
             ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = bullet.firstMatch(in: line, range: localRange) {
             ts.addAttribute(.foregroundColor, value: Theme.listMarker, range: global(m.range))
             ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = ordered.firstMatch(in: line, range: localRange) {
             ts.addAttribute(.foregroundColor, value: Theme.listMarker, range: global(m.range))
             ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            widenMarkerGap(ts, markerRange: global(m.range))
         }
 
         // Inline rules.
