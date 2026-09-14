@@ -30,6 +30,11 @@ app icon in place.
   empty item exits the list. Tab / Shift-Tab indent and outdent list items.
 - Type `/` at the start of a line for the slash command menu.
 - Documents autosave 0.8s after you stop typing (once a file has a path).
+- Crash recovery: every edited buffer — including untitled ones — is mirrored
+  to `~/Library/Application Support/Write/Recovery/` as you type. If the app
+  crashes, is force-quit, or you just quit (⌘Q, which never prompts), your
+  drafts reappear on the next launch. Closing a tab or window still asks
+  before discarding an unsaved untitled buffer.
 - `Write.app/Contents/MacOS/Write a.md b.md` opens each file in a tab.
 
 ## Shortcuts
