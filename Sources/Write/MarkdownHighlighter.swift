@@ -23,9 +23,13 @@ final class MarkdownHighlighter {
     private let quote = MarkdownHighlighter.regex(#"^\s*(>[ \t]?)+"#)
     private let rule = MarkdownHighlighter.regex(#"^\s*([-*_])(\s*\1){2,}\s*$"#)
     // Shared with EditorTextView, which uses them to continue a span's style
-    // when typing at its (visually concealed) closing delimiter.
+    // when typing at its (visually concealed) closing delimiter and to layer
+    // bold/italic instead of blindly nesting delimiters.
+    static let boldItalicText = MarkdownHighlighter.regex(#"(\*\*\*|___)(?=\S)(.+?)(?<=\S)\1"#)
     static let boldText = MarkdownHighlighter.regex(#"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
-    static let italicText = MarkdownHighlighter.regex(#"(?<![*\w])(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
+    // The opener may sit right after another delimiter (`***two** words*`);
+    // the closer's guards are what keep this from matching inside `**bold**`.
+    static let italicText = MarkdownHighlighter.regex(#"(?<!\w)(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
     static let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
     private let linkText = MarkdownHighlighter.regex(#"\[([^\]\n]*)\]\(([^)\n]*)\)"#)
     static let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
@@ -169,8 +173,27 @@ final class MarkdownHighlighter {
                 mark(tick)
             }
         }
-        Self.boldText.enumerateMatches(in: line, range: localRange) { m, _, _ in
+        // Triple delimiters are bold+italic in one span; handled first, and
+        // excluded below so the two-star rule can't half-match inside them.
+        var tripleRanges: [NSRange] = []
+        Self.boldItalicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
+            tripleRanges.append(m.range)
+            let r = global(m.range)
+            ts.addAttributes([.foregroundColor: Theme.bold, .obliqueness: 0.18], range: r)
+            let dLen = m.range(at: 1).length
+            let open = NSRange(location: r.location, length: dLen)
+            let close = NSRange(location: NSMaxRange(r) - dLen, length: dLen)
+            for delim in [open, close] {
+                ts.addAttributes([.foregroundColor: Theme.dim, .obliqueness: 0.0], range: delim)
+                mark(delim)
+            }
+        }
+        func insideTriple(_ range: NSRange) -> Bool {
+            tripleRanges.contains { NSIntersectionRange($0, range).length > 0 }
+        }
+        Self.boldText.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m, !insideTriple(m.range) else { return }
             let r = global(m.range)
             // Bold is a color accent, mirroring the terminal's bold override.
             ts.addAttribute(.foregroundColor, value: Theme.bold, range: r)
@@ -183,7 +206,7 @@ final class MarkdownHighlighter {
             }
         }
         Self.italicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
-            guard let m else { return }
+            guard let m, !insideTriple(m.range) else { return }
             let r = global(m.range)
             // Italics slant but keep whatever color the text already has.
             ts.addAttribute(.obliqueness, value: 0.18, range: r)

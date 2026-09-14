@@ -164,6 +164,7 @@ final class EditorTextView: NSTextView {
     /// Inline spans whose style continues when typing at their end:
     /// (regex, closing delimiter length; nil = length of capture group 1).
     private static let continuableSpans: [(NSRegularExpression, Int?)] = [
+        (MarkdownHighlighter.boldItalicText, nil),
         (MarkdownHighlighter.boldText, nil),
         (MarkdownHighlighter.italicText, 1),
         (MarkdownHighlighter.inlineCode, 1),
@@ -442,6 +443,104 @@ final class EditorTextView: NSTextView {
         setSelectedRange(NSRange(location: sel.location + (openTag as NSString).length, length: sel.length))
     }
 
+    /// An emphasis span on one line: full range including delimiters, inner
+    /// content, and which style layers it carries.
+    private struct EmphasisSpan {
+        let range: NSRange
+        let content: NSRange
+        let bold: Bool
+        let italic: Bool
+    }
+
+    private func emphasisSpans(inLine lineRange: NSRange) -> [EmphasisSpan] {
+        let ns = string as NSString
+        let line = ns.substring(with: lineRange)
+        let local = NSRange(location: 0, length: (line as NSString).length)
+        func global(_ r: NSRange) -> NSRange {
+            NSRange(location: lineRange.location + r.location, length: r.length)
+        }
+        var spans: [EmphasisSpan] = []
+        MarkdownHighlighter.boldItalicText.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            spans.append(EmphasisSpan(range: global(m.range), content: global(m.range(at: 2)),
+                                      bold: true, italic: true))
+        }
+        for (regex, isBold) in [(MarkdownHighlighter.boldText, true), (MarkdownHighlighter.italicText, false)] {
+            regex.enumerateMatches(in: line, range: local) { m, _, _ in
+                guard let m else { return }
+                let r = global(m.range)
+                guard !spans.contains(where: { $0.bold && $0.italic && NSIntersectionRange($0.range, r).length > 0 }) else { return }
+                spans.append(EmphasisSpan(range: r, content: global(m.range(at: 2)),
+                                          bold: isBold, italic: !isBold))
+            }
+        }
+        return spans
+    }
+
+    /// Layer-aware bold/italic toggling: `*`, `**`, and `***` are treated as
+    /// independent style layers on the same text, not opaque characters, so
+    /// bolding an italicized word gives `***word***` and toggling one layer
+    /// off a combined span leaves the other intact. Returns false when the
+    /// selection touches no emphasis span (the caller then wraps naively).
+    private func toggleEmphasis(bold: Bool, selection sel: NSRange) -> Bool {
+        let ns = string as NSString
+        let lineRange = ns.lineRange(for: NSRange(location: sel.location, length: 0))
+        guard NSMaxRange(sel) <= NSMaxRange(lineRange) else { return false }
+        let spans = emphasisSpans(inLine: lineRange)
+
+        // A span containing the selection: toggle its layer. A zero-length
+        // caret must be strictly inside (a caret at the boundary is "next to"
+        // the span, not on it). Prefer a span that has the layer being
+        // toggled (unwrap beats promote), innermost first.
+        let containing = spans.filter { span in
+            sel.location >= span.range.location && NSMaxRange(sel) <= NSMaxRange(span.range)
+                && (sel.length > 0 || (sel.location > span.range.location && sel.location < NSMaxRange(span.range)))
+        }.sorted { $0.range.length < $1.range.length }
+        if let span = containing.first(where: { bold ? $0.bold : $0.italic }) ?? containing.first {
+            let hasLayer = bold ? span.bold : span.italic
+            let content = ns.substring(with: span.content)
+            let newDelimiter: String
+            if hasLayer {
+                // Remove this layer, keeping the other if present.
+                newDelimiter = (bold ? span.italic : span.bold) ? (bold ? "*" : "**") : ""
+            } else {
+                // Adding a layer rewrites the whole span, so only do it when
+                // the selection means the whole span; a sub-range selection
+                // falls back to wrapping just that range.
+                let coversContent = sel.location <= span.content.location
+                    && NSMaxRange(sel) >= NSMaxRange(span.content)
+                guard sel.length == 0 || coversContent else { return false }
+                newDelimiter = "***"
+            }
+            insertText(newDelimiter + content + newDelimiter, replacementRange: span.range)
+            setSelectedRange(NSRange(location: span.range.location + (newDelimiter as NSString).length,
+                                     length: (content as NSString).length))
+            return true
+        }
+
+        // The selection reaches beyond span boundaries: grow it to whole
+        // spans, strip this layer from every span inside, and wrap the lot —
+        // Word-style "make the whole selection bold".
+        let touching = spans.filter { NSIntersectionRange($0.range, sel).length > 0 }
+        guard !touching.isEmpty else { return false }
+        var grown = sel
+        for span in touching { grown = NSUnionRange(grown, span.range) }
+        let rebuilt = NSMutableString(string: ns.substring(with: grown))
+        let stripped = spans
+            .filter { $0.range.location >= grown.location && NSMaxRange($0.range) <= NSMaxRange(grown) }
+            .filter { bold ? $0.bold : $0.italic }
+        for span in stripped.sorted(by: { $0.range.location > $1.range.location }) {
+            let keep = (bold ? span.italic : span.bold) ? (bold ? "*" : "**") : ""
+            let local = NSRange(location: span.range.location - grown.location, length: span.range.length)
+            rebuilt.replaceCharacters(in: local, with: keep + ns.substring(with: span.content) + keep)
+        }
+        let delimiter = bold ? "**" : "*"
+        insertText(delimiter + (rebuilt as String) + delimiter, replacementRange: grown)
+        setSelectedRange(NSRange(location: grown.location + (delimiter as NSString).length,
+                                 length: rebuilt.length))
+        return true
+    }
+
     private func toggleInline(_ delimiter: String) {
         let ns = string as NSString
         let dLen = (delimiter as NSString).length
@@ -457,6 +556,11 @@ final class EditorTextView: NSTextView {
         }
 
         sel = trimmedToContent(sel)
+
+        if delimiter == "**" || delimiter == "*" {
+            if toggleEmphasis(bold: delimiter == "**", selection: sel) { return }
+        }
+
         let selected = ns.substring(with: sel)
 
         if selected.hasPrefix(delimiter), selected.hasSuffix(delimiter), (selected as NSString).length >= 2 * dLen {
