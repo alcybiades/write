@@ -62,6 +62,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // Without an explicit maxSize the view stops growing vertically, so
+        // narrow windows (more wrapping = taller text) can't scroll to the
+        // bottom of the document.
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
         textView.configure()
         textView.delegate = self
         selectionToolbar = SelectionToolbar(textView: textView)
@@ -543,6 +549,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         lm.ensureLayout(for: tc)
         let ns = currentDocument.storage.string as NSString
         var out = "inset=\(textView.textContainerInset) viewWidth=\(textView.bounds.width) maxTextWidth=\(Theme.maxTextWidth)\n"
+        let used = lm.usedRect(for: tc)
+        out += "viewHeight=\(textView.frame.height) usedHeight=\(used.height) required=\(used.height + 2 * textView.textContainerInset.height)\n"
         var glyphIndex = 0
         var prevMaxY: CGFloat = 0
         while glyphIndex < lm.numberOfGlyphs {
