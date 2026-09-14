@@ -2,13 +2,7 @@
 
 ![Write — a translucent terminal-styled markdown editor for macOS](docs/write.png)
 
-A minimalist native macOS markdown editor with the Neon Noir WezTerm aesthetic:
-`#141414` at exactly 0.60 opacity over a window-server background blur (radius
-30, the same CGS call WezTerm uses for `macos_window_background_blur`), the
-terminal palette — but mouse-first editing like Word or Pages.
-
-Settings (⌘,) let you pick any installed font family; Classic Console Neue is
-the default. Text size (⌘= / ⌘−) is a pure display preference.
+A markdown editor ... but with vibes
 
 ## Build & install
 
