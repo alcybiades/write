@@ -159,12 +159,61 @@ final class EditorTextView: NSTextView {
         setSelectedRange(NSRange(location: sel.location, length: 0))
     }
 
+    // MARK: - Continuing inline styles at span edges
+
+    /// Inline spans whose style continues when typing at their end:
+    /// (regex, closing delimiter length; nil = length of capture group 1).
+    private static let continuableSpans: [(NSRegularExpression, Int?)] = [
+        (MarkdownHighlighter.boldText, nil),
+        (MarkdownHighlighter.italicText, 1),
+        (MarkdownHighlighter.inlineCode, 1),
+        (MarkdownHighlighter.colorSpan, ("</span>" as NSString).length),
+    ]
+
+    /// A caret just past a span's closing delimiter is visually at the end of
+    /// the styled text (the markers are concealed), so typing there should
+    /// continue the style: returns the position inside the delimiter(s).
+    private func styleContinuationLocation(for caret: Int) -> Int {
+        let ns = string as NSString
+        var location = caret
+        var moved = true
+        while moved, location > 0, location <= ns.length {
+            moved = false
+            let lineRange = ns.lineRange(for: NSRange(location: location, length: 0))
+            let line = ns.substring(with: lineRange)
+            let local = NSRange(location: 0, length: (line as NSString).length)
+            let localCaret = location - lineRange.location
+            for (regex, closeLength) in Self.continuableSpans where !moved {
+                regex.enumerateMatches(in: line, range: local) { m, _, stop in
+                    guard let m, NSMaxRange(m.range) == localCaret else { return }
+                    location -= closeLength ?? m.range(at: 1).length
+                    moved = true
+                    stop.pointee = true
+                }
+            }
+        }
+        return location
+    }
+
     // MARK: - Slash commands
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
+        let inserted = (string as? String) ?? (string as? NSAttributedString)?.string
+        // Typing at the end of a bold/italic/code/color span continues the
+        // style. Whitespace stays outside: a trailing space inside the
+        // delimiters would invalidate the markdown span.
+        if replacementRange.location == NSNotFound, !hasMarkedText(),
+           let first = inserted?.first, !first.isWhitespace {
+            let sel = selectedRange()
+            if sel.length == 0 {
+                let inside = styleContinuationLocation(for: sel.location)
+                if inside != sel.location {
+                    setSelectedRange(NSRange(location: inside, length: 0))
+                }
+            }
+        }
         super.insertText(string, replacementRange: replacementRange)
-        let typed = (string as? String) ?? (string as? NSAttributedString)?.string
-        guard typed == "/" else { return }
+        guard inserted == "/" else { return }
         let ns = self.string as NSString
         let caret = selectedRange().location
         guard caret > 0 else { return }

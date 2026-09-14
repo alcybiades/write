@@ -116,5 +116,44 @@ tv.setSelectedRange(NSRange(location: 8, length: 0))
 tv.insertBacktab(nil)
 check("backtab outdents", tv.string, "- item")
 
+// Typing at the concealed end of an inline span continues its style.
+func type(_ tv: EditorTextView, _ s: String) {
+    tv.insertText(s, replacementRange: NSRange(location: NSNotFound, length: 0))
+}
+
+tv = makeTV("**bold**", caret: 8)
+type(tv, "x")
+check("continue bold at end", tv.string, "**boldx**")
+type(tv, "y")
+check("keep continuing bold", tv.string, "**boldxy**")
+
+tv = makeTV("*word*", caret: 6)
+type(tv, "x")
+check("continue italic at end", tv.string, "*wordx*")
+
+tv = makeTV("`code`", caret: 6)
+type(tv, "x")
+check("continue code at end", tv.string, "`codex`")
+
+tv = makeTV("**bold** tail", caret: 8)
+type(tv, "x")
+check("continue bold mid-line", tv.string, "**boldx** tail")
+
+tv = makeTV("**bold**", caret: 8)
+type(tv, " ")
+check("space stays outside span", tv.string, "**bold** ")
+
+tv = makeTV("**bold** and", caret: 12)
+type(tv, "x")
+check("plain text after span unaffected", tv.string, "**bold** andx")
+
+tv = makeTV("<span style=\"color:#FF0000\">red</span>", caret: 38)
+type(tv, "x")
+check("continue color span at end", tv.string, "<span style=\"color:#FF0000\">redx</span>")
+
+tv = makeTV("**bold**", caret: 0)
+type(tv, "x")
+check("typing before span unaffected", tv.string, "x**bold**")
+
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)
