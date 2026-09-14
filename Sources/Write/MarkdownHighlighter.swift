@@ -170,8 +170,11 @@ final class MarkdownHighlighter {
         boldText.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
             let r = global(m.range)
-            // Bold is a color accent, mirroring the terminal's bold override.
-            ts.addAttribute(.foregroundColor, value: Theme.bold, range: r)
+            // White and genuinely bold (synthetic stroke when the family
+            // has no bold face, e.g. Classic Console Neue).
+            let (boldFont, synthetic) = Theme.boldFont(size: Theme.fontSize)
+            ts.addAttributes([.foregroundColor: Theme.bold, .font: boldFont], range: r)
+            if synthetic { ts.addAttribute(.strokeWidth, value: -3.0, range: r) }
             let dLen = m.range(at: 1).length
             let open = NSRange(location: r.location, length: dLen)
             let close = NSRange(location: NSMaxRange(r) - dLen, length: dLen)

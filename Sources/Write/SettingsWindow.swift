@@ -43,11 +43,15 @@ final class SettingsWindowController: NSObject {
         popup.contentTintColor = Theme.foreground
         popup.target = self
         popup.action = #selector(fontSelected(_:))
+        // Items are added with nil actions; without this, menu validation
+        // can disable them all, making the font list unselectable.
+        popup.autoenablesItems = false
         let families = NSFontManager.shared.availableFontFamilies
             .filter { !$0.hasPrefix(".") }
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         for family in families {
             let item = NSMenuItem(title: family, action: nil, keyEquivalent: "")
+            item.isEnabled = true
             if let previewFont = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: 13) {
                 item.attributedTitle = NSAttributedString(string: family, attributes: [
                     .font: previewFont,
