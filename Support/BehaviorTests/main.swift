@@ -186,6 +186,26 @@ tv.setSelectedRange(NSRange(location: 2, length: 3))
 tv.toggleItalicMD(nil)
 check("italic on part of bold", tv.string, "***one* two**")
 
+// Code spans: unwrap from caret, unwrap from selections, merge across spans.
+tv = makeTV("run npm now", caret: 0)
+tv.setSelectedRange(NSRange(location: 4, length: 3))
+tv.toggleCodeMD(nil)
+check("code wrap", tv.string, "run `npm` now")
+
+tv = makeTV("run `npm` now", caret: 6)
+tv.toggleCodeMD(nil)
+check("code unwrap from caret", tv.string, "run npm now")
+
+tv = makeTV("run `npm` now", caret: 0)
+tv.setSelectedRange(NSRange(location: 4, length: 5))
+tv.toggleCodeMD(nil)
+check("code unwrap with markers selected", tv.string, "run npm now")
+
+tv = makeTV("`a` and b", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 9))
+tv.toggleCodeMD(nil)
+check("code merges across spans", tv.string, "`a and b`")
+
 tv = makeTV("- item", caret: 6)
 tv.insertTab(nil)
 check("tab indents list", tv.string, "  - item")

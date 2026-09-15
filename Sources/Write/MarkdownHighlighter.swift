@@ -113,13 +113,14 @@ final class MarkdownHighlighter {
         func global(_ r: NSRange) -> NSRange { NSRange(location: lineRange.location + r.location, length: r.length) }
         func mark(_ r: NSRange) { ts.addAttribute(.mdMarker, value: true, range: r) }
 
+        let monoFont = Theme.codeFont(size: (Theme.fontSize * 0.9).rounded())
         if fence.firstMatch(in: line, range: localRange) != nil {
             inCodeBlock.toggle()
-            ts.addAttributes([.foregroundColor: Theme.dim, .backgroundColor: Theme.codeBackground], range: lineRange)
+            ts.addAttributes([.font: monoFont, .foregroundColor: Theme.dim, .backgroundColor: Theme.codeBackground], range: lineRange)
             return
         }
         if inCodeBlock {
-            ts.addAttributes([.foregroundColor: Theme.code, .backgroundColor: Theme.codeBackground], range: lineRange)
+            ts.addAttributes([.font: monoFont, .foregroundColor: Theme.code, .backgroundColor: Theme.codeBackground], range: lineRange)
             return
         }
 
@@ -165,7 +166,11 @@ final class MarkdownHighlighter {
         Self.inlineCode.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
             let r = global(m.range)
-            ts.addAttributes([.foregroundColor: Theme.code, .backgroundColor: Theme.codeBackground], range: r)
+            ts.addAttributes([
+                .font: monoFont,
+                .foregroundColor: Theme.codeAmber,
+                .backgroundColor: Theme.codeBackground,
+            ], range: r)
             let open = NSRange(location: r.location, length: 1)
             let close = NSRange(location: NSMaxRange(r) - 1, length: 1)
             for tick in [open, close] {

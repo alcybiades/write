@@ -617,6 +617,49 @@ final class EditorTextView: NSTextView {
         return true
     }
 
+    /// Span-aware inline-code toggling, mirroring the emphasis behavior:
+    /// a caret or selection inside a `code` span unwraps it; a selection
+    /// crossing span boundaries grows to whole spans, merges their contents,
+    /// and wraps the lot. Returns false when no span is involved (the caller
+    /// then wraps naively).
+    private func toggleCodeSpan(selection sel: NSRange) -> Bool {
+        let ns = string as NSString
+        let lineRange = ns.lineRange(for: NSRange(location: sel.location, length: 0))
+        guard NSMaxRange(sel) <= NSMaxRange(lineRange) else { return false }
+        let line = ns.substring(with: lineRange)
+        let local = NSRange(location: 0, length: (line as NSString).length)
+        var spans: [(range: NSRange, content: NSRange)] = []
+        MarkdownHighlighter.inlineCode.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            let r = NSRange(location: lineRange.location + m.range.location, length: m.range.length)
+            spans.append((r, NSRange(location: r.location + 1, length: r.length - 2)))
+        }
+
+        let containing = spans.first { span in
+            sel.location >= span.range.location && NSMaxRange(sel) <= NSMaxRange(span.range)
+                && (sel.length > 0 || (sel.location > span.range.location && sel.location < NSMaxRange(span.range)))
+        }
+        if let span = containing {
+            let content = ns.substring(with: span.content)
+            insertText(content, replacementRange: span.range)
+            setSelectedRange(NSRange(location: span.range.location, length: (content as NSString).length))
+            return true
+        }
+
+        let touching = spans.filter { NSIntersectionRange($0.range, sel).length > 0 }
+        guard !touching.isEmpty else { return false }
+        var grown = sel
+        for span in touching { grown = NSUnionRange(grown, span.range) }
+        let rebuilt = NSMutableString(string: ns.substring(with: grown))
+        for span in touching.sorted(by: { $0.range.location > $1.range.location }) {
+            let local = NSRange(location: span.range.location - grown.location, length: span.range.length)
+            rebuilt.replaceCharacters(in: local, with: ns.substring(with: span.content))
+        }
+        insertText("`" + (rebuilt as String) + "`", replacementRange: grown)
+        setSelectedRange(NSRange(location: grown.location + 1, length: rebuilt.length))
+        return true
+    }
+
     private func toggleInline(_ delimiter: String) {
         let ns = string as NSString
         let dLen = (delimiter as NSString).length
@@ -635,6 +678,9 @@ final class EditorTextView: NSTextView {
 
         if delimiter == "**" || delimiter == "*" {
             if toggleEmphasis(bold: delimiter == "**", selection: sel) { return }
+        }
+        if delimiter == "`" {
+            if toggleCodeSpan(selection: sel) { return }
         }
 
         let selected = ns.substring(with: sel)

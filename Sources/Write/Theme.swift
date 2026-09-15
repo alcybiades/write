@@ -27,13 +27,20 @@ enum Theme {
     static let heading = NSColor(hex: 0xA4BEEF)
     static let italic = NSColor(hex: 0xD7E0FF)
     static let code = NSColor(hex: 0x55E6A5)
+    static let codeAmber = NSColor(hex: 0xFFB86C)
     static let dim = NSColor(hex: 0x526078)
     static let listMarker = NSColor(hex: 0xFFD166)
     static let quote = NSColor(hex: 0xBF8EE8)
     static let link = NSColor(hex: 0x7DD3FC)
     static let cursor = NSColor(hex: 0x727272)
     static let selection = NSColor(hex: 0x334A7D)
-    static let codeBackground = NSColor(hex: 0xFFFFFF, alpha: 0.05)
+    static let codeBackground = NSColor(hex: 0x2E2E2E, alpha: 0.5)
+
+    /// Monospaced font for code, independent of the body family.
+    /// (The system monospaced font is SF Mono on modern macOS.)
+    static func codeFont(size: CGFloat) -> NSFont {
+        .monospacedSystemFont(ofSize: size, weight: .regular)
+    }
 
     static let lineHeightMultiple: CGFloat = 1.16
     static let padding: CGFloat = 28
