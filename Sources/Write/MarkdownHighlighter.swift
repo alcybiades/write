@@ -1,5 +1,34 @@
 import AppKit
 
+/// Pads code background rects: block bands stretch back to the margin (the
+/// text indent becomes interior padding) and inline chips get a little air
+/// around the glyphs.
+final class CodeBackgroundLayoutManager: NSLayoutManager {
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>,
+                                          count rectCount: Int,
+                                          forCharacterRange charRange: NSRange,
+                                          color: NSColor) {
+        var rects = Array(UnsafeBufferPointer(start: rectArray, count: rectCount))
+        if color === Theme.codeBlockBackground {
+            for i in rects.indices {
+                rects[i].origin.x -= Theme.codeBlockPadding
+                rects[i].size.width += Theme.codeBlockPadding
+                // Overlap adjacent fill groups a hair so no seam shows
+                // between the fence row and the content rows.
+                rects[i] = rects[i].insetBy(dx: 0, dy: -0.5)
+            }
+        } else if color === Theme.codeBackground {
+            for i in rects.indices {
+                rects[i] = rects[i].insetBy(dx: -3, dy: 0)
+            }
+        }
+        rects.withUnsafeBufferPointer { buffer in
+            super.fillBackgroundRectArray(buffer.baseAddress!, count: rectCount,
+                                          forCharacterRange: charRange, color: color)
+        }
+    }
+}
+
 extension NSAttributedString.Key {
     /// Marks markdown syntax characters (##, **, backticks, link urls…).
     /// The editor hides these glyphs unless the caret is on their paragraph.
@@ -114,13 +143,24 @@ final class MarkdownHighlighter {
         func mark(_ r: NSRange) { ts.addAttribute(.mdMarker, value: true, range: r) }
 
         let monoFont = Theme.codeFont(size: (Theme.fontSize * 0.9).rounded())
+        // Code lines are indented; the layout manager stretches the block's
+        // background band back to the margin, so the indent reads as the
+        // band's interior padding.
+        let codeStyle = NSMutableParagraphStyle()
+        codeStyle.lineHeightMultiple = Theme.lineHeightMultiple
+        codeStyle.firstLineHeadIndent = Theme.codeBlockPadding
+        codeStyle.headIndent = Theme.codeBlockPadding
         if fence.firstMatch(in: line, range: localRange) != nil {
             inCodeBlock.toggle()
-            ts.addAttributes([.font: monoFont, .foregroundColor: Theme.dim, .backgroundColor: Theme.codeBackground], range: lineRange)
+            ts.addAttributes([.font: monoFont, .foregroundColor: Theme.dim,
+                              .backgroundColor: Theme.codeBlockBackground,
+                              .paragraphStyle: codeStyle], range: lineRange)
             return
         }
         if inCodeBlock {
-            ts.addAttributes([.font: monoFont, .foregroundColor: Theme.code, .backgroundColor: Theme.codeBackground], range: lineRange)
+            ts.addAttributes([.font: monoFont, .foregroundColor: Theme.code,
+                              .backgroundColor: Theme.codeBlockBackground,
+                              .paragraphStyle: codeStyle], range: lineRange)
             return
         }
 

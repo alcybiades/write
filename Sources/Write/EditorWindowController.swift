@@ -53,9 +53,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         guard let window else { return }
         let container = applyTerminalBackdrop(to: window)
 
-        let layoutManager = NSLayoutManager()
+        let layoutManager = CodeBackgroundLayoutManager()
         let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         textContainer.widthTracksTextView = true
+        // Zero fragment padding: AppKit anchors background fills sometimes
+        // with and sometimes without it, which misaligns code-band edges.
+        textContainer.lineFragmentPadding = 0
         layoutManager.addTextContainer(textContainer)
         documents[0].storage.addLayoutManager(layoutManager)
 
@@ -243,9 +246,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         // where the ascender-based layout puts it.
         let baselineDelta = max(0, Self.metricsLayoutManager.defaultBaselineOffset(for: titleFont) - titleFont.ascender)
         titleView.frame = NSRect(
-            x: horizontal + 5,
+            x: horizontal,
             y: titleTop - baselineDelta,
-            width: max(120, available - 2 * horizontal - 10),
+            width: max(120, available - 2 * horizontal),
             height: titleHeight + baselineDelta + 4
         )
     }
