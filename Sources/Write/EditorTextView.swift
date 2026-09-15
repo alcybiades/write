@@ -412,56 +412,111 @@ final class EditorTextView: NSTextView {
 
     // MARK: - Text color (serialized as inline HTML spans)
 
-    private static let fullColorSpan = try! NSRegularExpression(
-        pattern: #"^<span style="color:#([0-9A-Fa-f]{6})">(.*)</span>$"#,
-        options: [.dotMatchesLineSeparators])
-    private static let trailingOpenTag = try! NSRegularExpression(
-        pattern: #"<span style="color:#([0-9A-Fa-f]{6})">$"#)
+    private static let colorOpenTag = try! NSRegularExpression(
+        pattern: #"<span style="color:#([0-9A-Fa-f]{6})">"#)
+    private static let colorCloseTag = "</span>"
 
-    /// Wraps the selection in a color span; reapplying the same color
-    /// removes it, a different color replaces it.
+    /// A single content character with the color of the innermost span that
+    /// covers it. Tags themselves are not content, so they never survive a
+    /// rewrite — the serializer emits fresh, balanced ones.
+    private struct ColoredChar {
+        let unit: unichar
+        let location: Int
+        var hex: String?
+    }
+
+    private static func sameHex(_ a: String?, _ b: String?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (a?, b?): return a.caseInsensitiveCompare(b) == .orderedSame
+        default: return false
+        }
+    }
+
+    /// Walks `range` tag by tag, returning its content characters tagged with
+    /// the color in effect, plus the full range of each outermost span. A
+    /// `</span>` with nothing open is treated as content so stray text is
+    /// never silently eaten.
+    private func colorScan(in range: NSRange) -> (chars: [ColoredChar], spans: [NSRange]) {
+        let ns = string as NSString
+        let closeLength = (Self.colorCloseTag as NSString).length
+        var chars: [ColoredChar] = []
+        var spans: [NSRange] = []
+        var open: [(hex: String, start: Int)] = []
+        var i = range.location
+        let end = NSMaxRange(range)
+        while i < end {
+            let rest = NSRange(location: i, length: end - i)
+            if let m = Self.colorOpenTag.firstMatch(in: string, options: .anchored, range: rest) {
+                open.append((ns.substring(with: m.range(at: 1)), i))
+                i = NSMaxRange(m.range)
+                continue
+            }
+            if !open.isEmpty, i + closeLength <= end,
+               ns.substring(with: NSRange(location: i, length: closeLength)) == Self.colorCloseTag {
+                let span = open.removeLast()
+                if open.isEmpty {
+                    spans.append(NSRange(location: span.start, length: i + closeLength - span.start))
+                }
+                i += closeLength
+                continue
+            }
+            chars.append(ColoredChar(unit: ns.character(at: i), location: i, hex: open.last?.hex))
+            i += 1
+        }
+        return (chars, spans)
+    }
+
+    /// Paints the selection `hex`, replacing whatever colors it already
+    /// carries; reapplying the color it uniformly carries strips it instead.
+    ///
+    /// The selection is flattened rather than wrapped: wrapping a mixed or
+    /// half-covered stretch of text nests spans inside spans (or splits a
+    /// tag down the middle), and the highlighter, which matches one span at
+    /// a time, then renders the leftover tags as literal text.
     func applyColor(hex: String) {
         let ns = string as NSString
         let sel = trimmedToContent(selectedRange())
         guard sel.length > 0 else { return }
-        let selected = ns.substring(with: sel)
-        let selNS = selected as NSString
-        let openTag = "<span style=\"color:#\(hex)\">"
-        let closeLen = ("</span>" as NSString).length
 
-        // Selection includes the tags: swap the color or unwrap.
-        if let m = Self.fullColorSpan.firstMatch(in: selected, range: NSRange(location: 0, length: selNS.length)) {
-            let currentHex = selNS.substring(with: m.range(at: 1))
-            let inner = selNS.substring(with: m.range(at: 2))
-            let replacement = currentHex.caseInsensitiveCompare(hex) == .orderedSame
-                ? inner
-                : "<span style=\"color:#\(hex)\">\(inner)</span>"
-            insertText(replacement, replacementRange: sel)
-            setSelectedRange(NSRange(location: sel.location, length: (replacement as NSString).length))
-            return
+        // Spans never cross a blank line in practice, so the paragraphs the
+        // selection touches are enough context to re-serialize from.
+        let (chars, spans) = colorScan(in: ns.paragraphRange(for: sel))
+
+        // Rewrite the selection plus any span it only partly covers, so the
+        // uncovered remainder keeps its own color under a tag of its own.
+        var start = sel.location
+        var end = NSMaxRange(sel)
+        for span in spans where NSIntersectionRange(span, sel).length > 0 {
+            start = min(start, span.location)
+            end = max(end, NSMaxRange(span))
         }
+        let region = NSRange(location: start, length: end - start)
 
-        // Selection is the inner text of a surrounding span.
-        let lookbackLength = min(40, sel.location)
-        let before = ns.substring(with: NSRange(location: sel.location - lookbackLength, length: lookbackLength))
-        if let m = Self.trailingOpenTag.firstMatch(in: before, range: NSRange(location: 0, length: (before as NSString).length)),
-           NSMaxRange(sel) + closeLen <= ns.length,
-           ns.substring(with: NSRange(location: NSMaxRange(sel), length: closeLen)) == "</span>" {
-            let tagLength = m.range.length
-            let currentHex = (before as NSString).substring(with: m.range(at: 1))
-            let outer = NSRange(location: sel.location - tagLength, length: tagLength + sel.length + closeLen)
-            if currentHex.caseInsensitiveCompare(hex) == .orderedSame {
-                insertText(selected, replacementRange: outer)
-                setSelectedRange(NSRange(location: outer.location, length: sel.length))
-            } else {
-                insertText(openTag + selected + "</span>", replacementRange: outer)
-                setSelectedRange(NSRange(location: outer.location + (openTag as NSString).length, length: sel.length))
+        var painted = chars.filter { $0.location >= start && $0.location < end }
+        let covered = painted.indices.filter { NSLocationInRange(painted[$0].location, sel) }
+        guard !covered.isEmpty else { return }
+        let uniform = covered.allSatisfy { Self.sameHex(painted[$0].hex, hex) }
+        for i in covered { painted[i].hex = uniform ? nil : hex }
+
+        var units: [unichar] = []
+        func emit(_ text: String) { units.append(contentsOf: text.utf16) }
+        var current: String?
+        var selStart = 0, selEnd = 0
+        for (i, c) in painted.enumerated() {
+            if !Self.sameHex(c.hex, current) {
+                if current != nil { emit(Self.colorCloseTag) }
+                if let hex = c.hex { emit("<span style=\"color:#\(hex)\">") }
+                current = c.hex
             }
-            return
+            if i == covered.first { selStart = units.count }
+            units.append(c.unit)
+            if i == covered.last { selEnd = units.count }
         }
+        if current != nil { emit(Self.colorCloseTag) }
 
-        insertText(openTag + selected + "</span>", replacementRange: sel)
-        setSelectedRange(NSRange(location: sel.location + (openTag as NSString).length, length: sel.length))
+        insertText(String(utf16CodeUnits: units, count: units.count), replacementRange: region)
+        setSelectedRange(NSRange(location: region.location + selStart, length: selEnd - selStart))
     }
 
     /// An emphasis span on one line: full range including delimiters, inner
