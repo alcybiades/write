@@ -117,9 +117,18 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         statusLabel.alignment = .right
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        // A soft backdrop so body text scrolling beneath stays legible.
+        let statusPill = NSView()
+        statusPill.wantsLayer = true
+        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.75).cgColor
+        statusPill.layer?.cornerRadius = 7
+        statusPill.layer?.cornerCurve = .continuous
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.addSubview(statusLabel)
+
         container.addSubview(tabBar)
         container.addSubview(scrollView)
-        container.addSubview(statusLabel)
+        container.addSubview(statusPill)
 
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: container.topAnchor),
@@ -130,8 +139,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            statusLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -26),
-            statusLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            statusLabel.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 9),
+            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -9),
+            statusLabel.topAnchor.constraint(equalTo: statusPill.topAnchor, constant: 3),
+            statusLabel.bottomAnchor.constraint(equalTo: statusPill.bottomAnchor, constant: -3),
+            statusPill.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            statusPill.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
         ])
 
         NotificationCenter.default.addObserver(
@@ -199,12 +212,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         // bar) equals the gap between the title and the body text.
         let titleGap = Theme.fontSize * 0.9
         let titleTop = titleGap
-        let extraTop = (titleTop - Theme.padding) + titleHeight + titleGap
+        // Space above the body text (title area) and below it (the plain
+        // padding plus clearance so the last line never sits under the
+        // status pill in the bottom-right corner).
+        let topSpace = titleTop + titleHeight + titleGap
+        let bottomSpace = Theme.padding + 26
 
         let available = textView.bounds.width
         let horizontal = max(Theme.padding, (available - Theme.maxTextWidth) / 2)
-        let newInset = NSSize(width: horizontal, height: Theme.padding + extraTop / 2)
-        textView.extraTopInset = extraTop
+        let newInset = NSSize(width: horizontal, height: (topSpace + bottomSpace) / 2)
+        textView.extraTopInset = topSpace - bottomSpace
         // Only write when changed: setting the inset resizes the text view,
         // which re-posts the frame notification that got us here.
         if textView.textContainerInset != newInset {
