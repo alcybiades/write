@@ -76,6 +76,34 @@ check("color swap", tv.string, "<span style=\"color:#72A7FF\">color me</span>")
 tv.applyColor(hex: "72A7FF")
 check("color remove on reapply", tv.string, "color me")
 
+// A block with mixed colors is repainted, not wrapped around its existing
+// spans — wrapping would nest tags the highlighter can't read.
+tv = makeTV("hello <span style=\"color:#FF5C5C\">red</span> world", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 50))
+tv.applyColor(hex: "72A7FF")
+check("color overrides mixed block", tv.string,
+      "<span style=\"color:#72A7FF\">hello red world</span>")
+
+// Two spans of one color read as uniform, so reapplying it strips both.
+tv = makeTV("<span style=\"color:#FF5C5C\">a</span><span style=\"color:#FF5C5C\">b</span>", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 72))
+tv.applyColor(hex: "FF5C5C")
+check("color remove across sibling spans", tv.string, "ab")
+
+// Half-covered span: the uncovered tail keeps its color under its own tag
+// instead of having the shared close tag stranded.
+tv = makeTV("one <span style=\"color:#FF5C5C\">two three</span>", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 35))
+tv.applyColor(hex: "72A7FF")
+check("color splits partly covered span", tv.string,
+      "<span style=\"color:#72A7FF\">one two</span><span style=\"color:#FF5C5C\"> three</span>")
+
+// Spans nested by an earlier version collapse to one on the next apply.
+tv = makeTV("<span style=\"color:#FF5C5C\">a<span style=\"color:#55E6A5\">b</span></span>", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 72))
+tv.applyColor(hex: "72A7FF")
+check("color flattens nested spans", tv.string, "<span style=\"color:#72A7FF\">ab</span>")
+
 // WYSIWYG deletion: backspace after concealed markers removes the visible
 // character, not invisible syntax; at a heading start it un-formats.
 tv = makeTV("see **bold**", caret: 12)
