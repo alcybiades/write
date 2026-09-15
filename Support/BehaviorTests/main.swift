@@ -109,12 +109,104 @@ tv.setSelectedRange(NSRange(location: 0, length: 4))
 tv.toggleItalicMD(nil)
 check("italic wrap", tv.string, "*word*")
 
+// Bold and italic are layers on the same text, not opaque characters.
+tv = makeTV("*word*", caret: 3)
+tv.toggleBoldMD(nil)
+check("bold on italic layers", tv.string, "***word***")
+tv.toggleBoldMD(nil)
+check("bold off keeps italic", tv.string, "*word*")
+
+tv = makeTV("**word**", caret: 4)
+tv.toggleItalicMD(nil)
+check("italic on bold layers", tv.string, "***word***")
+tv.toggleItalicMD(nil)
+check("italic off keeps bold", tv.string, "**word**")
+
+tv = makeTV("***word***", caret: 5)
+tv.toggleBoldMD(nil)
+check("unbold combined span", tv.string, "*word*")
+
+tv = makeTV("**word**", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 8))
+tv.toggleBoldMD(nil)
+check("unwrap with markers selected", tv.string, "word")
+
+tv = makeTV("**word**", caret: 0)
+tv.setSelectedRange(NSRange(location: 3, length: 3))
+tv.toggleBoldMD(nil)
+check("unbold from partial selection", tv.string, "word")
+
+// A selection spanning styled and plain text flattens, then wraps whole.
+tv = makeTV("**word** and", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 12))
+tv.toggleBoldMD(nil)
+check("bold mixed selection", tv.string, "**word and**")
+
+tv = makeTV("*word* and", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 10))
+tv.toggleBoldMD(nil)
+check("bold mixed keeps italic layer", tv.string, "***word* and**")
+
+tv = makeTV("**word** and", caret: 0)
+tv.setSelectedRange(NSRange(location: 4, length: 8))
+tv.toggleBoldMD(nil)
+check("selection crossing span grows to it", tv.string, "**word and**")
+
+// Sub-range of a span: only that range gets the new layer.
+tv = makeTV("**one two**", caret: 0)
+tv.setSelectedRange(NSRange(location: 2, length: 3))
+tv.toggleItalicMD(nil)
+check("italic on part of bold", tv.string, "***one* two**")
+
 tv = makeTV("- item", caret: 6)
 tv.insertTab(nil)
 check("tab indents list", tv.string, "  - item")
 tv.setSelectedRange(NSRange(location: 8, length: 0))
 tv.insertBacktab(nil)
 check("backtab outdents", tv.string, "- item")
+
+// Typing at the concealed end of an inline span continues its style.
+func type(_ tv: EditorTextView, _ s: String) {
+    tv.insertText(s, replacementRange: NSRange(location: NSNotFound, length: 0))
+}
+
+tv = makeTV("**bold**", caret: 8)
+type(tv, "x")
+check("continue bold at end", tv.string, "**boldx**")
+type(tv, "y")
+check("keep continuing bold", tv.string, "**boldxy**")
+
+tv = makeTV("*word*", caret: 6)
+type(tv, "x")
+check("continue italic at end", tv.string, "*wordx*")
+
+tv = makeTV("`code`", caret: 6)
+type(tv, "x")
+check("continue code at end", tv.string, "`codex`")
+
+tv = makeTV("**bold** tail", caret: 8)
+type(tv, "x")
+check("continue bold mid-line", tv.string, "**boldx** tail")
+
+tv = makeTV("**bold**", caret: 8)
+type(tv, " ")
+check("space stays outside span", tv.string, "**bold** ")
+
+tv = makeTV("**bold** and", caret: 12)
+type(tv, "x")
+check("plain text after span unaffected", tv.string, "**bold** andx")
+
+tv = makeTV("<span style=\"color:#FF0000\">red</span>", caret: 38)
+type(tv, "x")
+check("continue color span at end", tv.string, "<span style=\"color:#FF0000\">redx</span>")
+
+tv = makeTV("**bold**", caret: 0)
+type(tv, "x")
+check("typing before span unaffected", tv.string, "x**bold**")
+
+tv = makeTV("***word***", caret: 10)
+type(tv, "x")
+check("continue combined span at end", tv.string, "***wordx***")
 
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

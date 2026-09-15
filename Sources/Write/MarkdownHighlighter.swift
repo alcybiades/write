@@ -22,11 +22,17 @@ final class MarkdownHighlighter {
     private let ordered = MarkdownHighlighter.regex(#"^\s*\d+[.)][ \t]"#)
     private let quote = MarkdownHighlighter.regex(#"^\s*(>[ \t]?)+"#)
     private let rule = MarkdownHighlighter.regex(#"^\s*([-*_])(\s*\1){2,}\s*$"#)
-    private let boldText = MarkdownHighlighter.regex(#"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
-    private let italicText = MarkdownHighlighter.regex(#"(?<![*\w])(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
-    private let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
+    // Shared with EditorTextView, which uses them to continue a span's style
+    // when typing at its (visually concealed) closing delimiter and to layer
+    // bold/italic instead of blindly nesting delimiters.
+    static let boldItalicText = MarkdownHighlighter.regex(#"(\*\*\*|___)(?=\S)(.+?)(?<=\S)\1"#)
+    static let boldText = MarkdownHighlighter.regex(#"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
+    // The opener may sit right after another delimiter (`***two** words*`);
+    // the closer's guards are what keep this from matching inside `**bold**`.
+    static let italicText = MarkdownHighlighter.regex(#"(?<!\w)(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
+    static let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
     private let linkText = MarkdownHighlighter.regex(#"\[([^\]\n]*)\]\(([^)\n]*)\)"#)
-    private let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
+    static let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
 
     private var isHighlighting = false
 
@@ -156,7 +162,7 @@ final class MarkdownHighlighter {
         }
 
         // Inline rules.
-        inlineCode.enumerateMatches(in: line, range: localRange) { m, _, _ in
+        Self.inlineCode.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
             let r = global(m.range)
             ts.addAttributes([.foregroundColor: Theme.code, .backgroundColor: Theme.codeBackground], range: r)
@@ -167,8 +173,27 @@ final class MarkdownHighlighter {
                 mark(tick)
             }
         }
-        boldText.enumerateMatches(in: line, range: localRange) { m, _, _ in
+        // Triple delimiters are bold+italic in one span; handled first, and
+        // excluded below so the two-star rule can't half-match inside them.
+        var tripleRanges: [NSRange] = []
+        Self.boldItalicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
+            tripleRanges.append(m.range)
+            let r = global(m.range)
+            ts.addAttributes([.foregroundColor: Theme.bold, .obliqueness: 0.18], range: r)
+            let dLen = m.range(at: 1).length
+            let open = NSRange(location: r.location, length: dLen)
+            let close = NSRange(location: NSMaxRange(r) - dLen, length: dLen)
+            for delim in [open, close] {
+                ts.addAttributes([.foregroundColor: Theme.dim, .obliqueness: 0.0], range: delim)
+                mark(delim)
+            }
+        }
+        func insideTriple(_ range: NSRange) -> Bool {
+            tripleRanges.contains { NSIntersectionRange($0, range).length > 0 }
+        }
+        Self.boldText.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m, !insideTriple(m.range) else { return }
             let r = global(m.range)
             // White and genuinely bold (synthetic stroke when the family
             // has no bold face, e.g. Classic Console Neue).
@@ -183,8 +208,8 @@ final class MarkdownHighlighter {
                 mark(delim)
             }
         }
-        italicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
-            guard let m else { return }
+        Self.italicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m, !insideTriple(m.range) else { return }
             let r = global(m.range)
             // Italics slant but keep whatever color the text already has.
             ts.addAttribute(.obliqueness, value: 0.18, range: r)
@@ -209,7 +234,7 @@ final class MarkdownHighlighter {
             mark(NSRange(location: NSMaxRange(textRange), length: NSMaxRange(r) - NSMaxRange(textRange)))
         }
         // Applied last so an explicit color wins inside bold/italic runs.
-        colorSpan.enumerateMatches(in: line, range: localRange) { m, _, _ in
+        Self.colorSpan.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
             let r = global(m.range)
             let contentRange = global(m.range(at: 2))

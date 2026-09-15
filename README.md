@@ -29,6 +29,9 @@ app icon in place.
 - Bullet / numbered / task lists and quotes continue on Enter; Enter on an
   empty item exits the list. Tab / Shift-Tab indent and outdent list items.
 - Type `/` at the start of a line for the slash command menu.
+- Typing at the end of a bold/italic/code/colored span continues the style,
+  Word-style: the caret may sit past the concealed closing marker, but new
+  characters land inside it. Typing a space exits the span.
 - Documents autosave 0.8s after you stop typing (once a file has a path).
 - Crash recovery: every edited buffer — including untitled ones — is mirrored
   to `~/Library/Application Support/Write/Recovery/` as you type. If the app
