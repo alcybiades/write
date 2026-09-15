@@ -180,12 +180,15 @@ final class MarkdownHighlighter {
             guard let m else { return }
             tripleRanges.append(m.range)
             let r = global(m.range)
-            ts.addAttributes([.foregroundColor: Theme.bold, .obliqueness: 0.18], range: r)
+            let (biFont, syntheticBold, syntheticItalic) = Theme.boldItalicFont(size: Theme.fontSize)
+            ts.addAttributes([.foregroundColor: Theme.bold, .font: biFont], range: r)
+            if syntheticBold { ts.addAttribute(.strokeWidth, value: -3.0, range: r) }
+            if syntheticItalic { ts.addAttribute(.obliqueness, value: 0.18, range: r) }
             let dLen = m.range(at: 1).length
             let open = NSRange(location: r.location, length: dLen)
             let close = NSRange(location: NSMaxRange(r) - dLen, length: dLen)
             for delim in [open, close] {
-                ts.addAttributes([.foregroundColor: Theme.dim, .obliqueness: 0.0], range: delim)
+                ts.addAttributes([.foregroundColor: Theme.dim, .obliqueness: 0.0, .strokeWidth: 0.0], range: delim)
                 mark(delim)
             }
         }
@@ -211,8 +214,14 @@ final class MarkdownHighlighter {
         Self.italicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m, !insideTriple(m.range) else { return }
             let r = global(m.range)
-            // Italics slant but keep whatever color the text already has.
-            ts.addAttribute(.obliqueness, value: 0.18, range: r)
+            // Real italic face when the family has one; slant otherwise.
+            // Color is left alone so italics inherit their surroundings.
+            let (italicFont, synthetic) = Theme.italicFont(size: Theme.fontSize)
+            if synthetic {
+                ts.addAttribute(.obliqueness, value: 0.18, range: r)
+            } else {
+                ts.addAttribute(.font, value: italicFont, range: r)
+            }
             let open = NSRange(location: r.location, length: 1)
             let close = NSRange(location: NSMaxRange(r) - 1, length: 1)
             for delim in [open, close] {

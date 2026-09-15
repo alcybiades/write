@@ -102,6 +102,39 @@ enum Theme {
         return result
     }
 
+    private static var italicCache: [String: (font: NSFont, synthetic: Bool)] = [:]
+
+    /// The family's real italic face; `synthetic` means fake it with skew.
+    static func italicFont(size: CGFloat) -> (font: NSFont, synthetic: Bool) {
+        let key = "\(fontFamily)#\(size)"
+        if let cached = italicCache[key] { return cached }
+        let regular = font(size: size)
+        let italic = NSFontManager.shared.convert(regular, toHaveTrait: .italicFontMask)
+        let synthetic = !NSFontManager.shared.traits(of: italic).contains(.italicFontMask)
+        let result = (synthetic ? regular : italic, synthetic)
+        italicCache[key] = result
+        return result
+    }
+
+    private static var boldItalicCache: [String: (font: NSFont, syntheticBold: Bool, syntheticItalic: Bool)] = [:]
+
+    /// The family's bold-italic face, degrading gracefully: real bold with
+    /// synthetic slant, or regular with synthetic weight and slant.
+    static func boldItalicFont(size: CGFloat) -> (font: NSFont, syntheticBold: Bool, syntheticItalic: Bool) {
+        let key = "\(fontFamily)#\(size)"
+        if let cached = boldItalicCache[key] { return cached }
+        let (bold, syntheticBold) = boldFont(size: size)
+        let combined = NSFontManager.shared.convert(bold, toHaveTrait: .italicFontMask)
+        let traits = NSFontManager.shared.traits(of: combined)
+        let hasItalic = traits.contains(.italicFontMask)
+        let hasBold = traits.contains(.boldFontMask) || syntheticBold
+        let result: (NSFont, Bool, Bool) = hasItalic && hasBold
+            ? (combined, syntheticBold, false)
+            : (bold, syntheticBold, true)
+        boldItalicCache[key] = result
+        return result
+    }
+
     static func paragraphStyle(spacingBefore: CGFloat = 0) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = lineHeightMultiple
