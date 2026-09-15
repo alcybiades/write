@@ -117,12 +117,20 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         statusLabel.alignment = .right
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // A soft backdrop so body text scrolling beneath stays legible.
+        // A translucent in-window blur the same color as the backdrop: over
+        // empty background it is invisible (blurring a flat color yields the
+        // same color); it only becomes apparent when text passes beneath.
         let statusPill = NSView()
         statusPill.wantsLayer = true
-        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.75).cgColor
+        statusPill.layerUsesCoreImageFilters = true
+        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.25).cgColor
         statusPill.layer?.cornerRadius = 7
         statusPill.layer?.cornerCurve = .continuous
+        statusPill.layer?.masksToBounds = true
+        if let blur = CIFilter(name: "CIGaussianBlur") {
+            blur.setValue(7, forKey: kCIInputRadiusKey)
+            statusPill.layer?.backgroundFilters = [blur]
+        }
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         statusPill.addSubview(statusLabel)
 
