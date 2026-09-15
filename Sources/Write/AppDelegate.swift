@@ -43,6 +43,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
 
+        // Debug: select line N fully and bold it, to reproduce artifacts.
+        if let flagIndex = args.firstIndex(of: "--boldline"), args.indices.contains(flagIndex + 1),
+           let lineNumber = Int(args[flagIndex + 1]), let tv = keyController?.textView {
+            let ns = tv.string as NSString
+            var lineStart = 0
+            for _ in 0..<lineNumber {
+                lineStart = NSMaxRange(ns.lineRange(for: NSRange(location: lineStart, length: 0)))
+            }
+            tv.setSelectedRange(ns.lineRange(for: NSRange(location: lineStart, length: 0)))
+            tv.toggleBoldMD(nil)
+        }
+
         if args.contains("--settings") { openSettings(nil) }
         if let flagIndex = args.firstIndex(of: "--snapshot"), args.indices.contains(flagIndex + 1) {
             let outPath = args[flagIndex + 1]

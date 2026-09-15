@@ -90,9 +90,30 @@ final class EditorTextView: NSTextView {
         }
     }
 
+    // MARK: - Selection residue
+
+    private var lastSelectionRect: NSRect = .zero
+
+    /// Concealed 0.1pt markers give line fragments fractional heights, so
+    /// the rect AppKit repaints when a selection moves away can be a hair
+    /// smaller than the highlight it drew — leaving ~1px slivers of the old
+    /// selection color at the line's edges. Repaint generously around both
+    /// the old and new selection.
+    private func repaintSelectionNeighborhood() {
+        guard let layoutManager, let textContainer else { return }
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: selectedRange(), actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        rect.origin.x += textContainerOrigin.x
+        rect.origin.y += textContainerOrigin.y
+        setNeedsDisplay(lastSelectionRect.insetBy(dx: -4, dy: -4))
+        setNeedsDisplay(rect.insetBy(dx: -4, dy: -4))
+        lastSelectionRect = rect
+    }
+
     /// Clicks and vertical movement can land the caret inside a concealed
     /// run; snap it to the nearer edge.
     @objc private func selectionChanged() {
+        repaintSelectionNeighborhood()
         guard !navigating else { return }
         let sel = selectedRange()
         guard sel.length == 0, sel.location > 0 else { return }
