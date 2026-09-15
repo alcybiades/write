@@ -305,7 +305,9 @@ private final class TabItemView: NSView {
 }
 
 /// A small "×" that swallows its own clicks so they don't select the tab.
-private final class HoverCloseButton: NSView {
+/// Also the settings panel's close affordance — it is borderless, so it has
+/// no titlebar widget of its own.
+final class HoverCloseButton: NSView {
 
     var onClick: (() -> Void)?
     private var hovered = false { didSet { needsDisplay = true } }

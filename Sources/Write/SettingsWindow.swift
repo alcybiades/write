@@ -29,6 +29,19 @@ final class SettingsWindowController: NSObject {
 
         let container = applyTerminalBackdrop(to: panel)
 
+        // Borderless: no titlebar close widget, so draw our own × in the
+        // corner, mirroring the tab strip's.
+        let close = HoverCloseButton()
+        close.onClick = { [weak panel] in panel?.close() }
+        close.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(close)
+        NSLayoutConstraint.activate([
+            close.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            close.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            close.widthAnchor.constraint(equalToConstant: 22),
+            close.heightAnchor.constraint(equalToConstant: 22),
+        ])
+
         let heading = NSTextField(labelWithString: "settings")
         heading.font = Theme.font(size: 12)
         heading.textColor = Theme.dim
