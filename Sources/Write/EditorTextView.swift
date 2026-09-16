@@ -128,12 +128,19 @@ final class EditorTextView: NSTextView {
 
     override func deleteBackward(_ sender: Any?) {
         let sel = selectedRange()
-        guard sel.length == 0, sel.location > 0,
-              let run = concealedRun(containing: sel.location - 1) else {
+        let ns = string as NSString
+        if sel.length > 0 {
+            insertText("", replacementRange: normalizedEditRange(sel, isDeletion: true))
+            return
+        }
+        guard sel.location > 0 else {
             super.deleteBackward(sender)
             return
         }
-        let ns = string as NSString
+        guard let run = concealedRun(containing: sel.location - 1) else {
+            deleteVisibleCharacter(ns.rangeOfComposedCharacterSequence(at: sel.location - 1))
+            return
+        }
         let paragraph = ns.paragraphRange(for: sel)
         if run.location == paragraph.location {
             // A concealed block marker (e.g. a heading's "# ") at the start
@@ -154,16 +161,22 @@ final class EditorTextView: NSTextView {
             super.deleteBackward(sender)
             return
         }
-        let charRange = ns.rangeOfComposedCharacterSequence(at: index)
-        insertText("", replacementRange: charRange)
+        deleteVisibleCharacter(ns.rangeOfComposedCharacterSequence(at: index))
     }
 
     override func deleteForward(_ sender: Any?) {
         let sel = selectedRange()
         let ns = string as NSString
-        guard sel.length == 0, sel.location < ns.length,
-              let run = concealedRun(containing: sel.location) else {
+        if sel.length > 0 {
+            insertText("", replacementRange: normalizedEditRange(sel, isDeletion: true))
+            return
+        }
+        guard sel.location < ns.length else {
             super.deleteForward(sender)
+            return
+        }
+        guard let run = concealedRun(containing: sel.location) else {
+            deleteVisibleCharacter(ns.rangeOfComposedCharacterSequence(at: sel.location), caretAfter: sel.location)
             return
         }
         // Delete the nearest visible character to the right of the run.
@@ -175,9 +188,117 @@ final class EditorTextView: NSTextView {
             super.deleteForward(sender)
             return
         }
-        let charRange = ns.rangeOfComposedCharacterSequence(at: index)
-        insertText("", replacementRange: charRange)
-        setSelectedRange(NSRange(location: sel.location, length: 0))
+        deleteVisibleCharacter(ns.rangeOfComposedCharacterSequence(at: index), caretAfter: sel.location)
+    }
+
+    override func cut(_ sender: Any?) {
+        let sel = selectedRange()
+        if sel.length > 0 {
+            let grown = normalizedEditRange(sel, isDeletion: true)
+            if grown != sel { setSelectedRange(grown) }
+        }
+        super.cut(sender)
+    }
+
+    // MARK: - Inline spans as atomic units
+
+    /// Any inline span with concealed syntax (emphasis, code, color, link):
+    /// full source range plus the visible content range.
+    private struct InlineSpan {
+        let range: NSRange
+        let content: NSRange
+    }
+
+    /// All inline spans on the line containing `location`.
+    private func inlineSpans(around location: Int) -> [InlineSpan] {
+        let ns = string as NSString
+        guard ns.length > 0 else { return [] }
+        let lineRange = ns.lineRange(for: NSRange(location: min(location, ns.length), length: 0))
+        let line = ns.substring(with: lineRange)
+        let local = NSRange(location: 0, length: (line as NSString).length)
+        func g(_ r: NSRange) -> NSRange { NSRange(location: lineRange.location + r.location, length: r.length) }
+
+        var spans: [InlineSpan] = []
+        var tripleRanges: [NSRange] = []
+        MarkdownHighlighter.boldItalicText.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            tripleRanges.append(m.range)
+            spans.append(InlineSpan(range: g(m.range), content: g(m.range(at: 2))))
+        }
+        func overlapsTriple(_ r: NSRange) -> Bool {
+            tripleRanges.contains { NSIntersectionRange($0, r).length > 0 }
+        }
+        for regex in [MarkdownHighlighter.boldText, MarkdownHighlighter.italicText] {
+            regex.enumerateMatches(in: line, range: local) { m, _, _ in
+                guard let m, !overlapsTriple(m.range) else { return }
+                spans.append(InlineSpan(range: g(m.range), content: g(m.range(at: 2))))
+            }
+        }
+        MarkdownHighlighter.inlineCode.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            let r = g(m.range)
+            spans.append(InlineSpan(range: r, content: NSRange(location: r.location + 1, length: r.length - 2)))
+        }
+        MarkdownHighlighter.colorSpan.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            spans.append(InlineSpan(range: g(m.range), content: g(m.range(at: 2))))
+        }
+        MarkdownHighlighter.linkText.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            spans.append(InlineSpan(range: g(m.range), content: g(m.range(at: 1))))
+        }
+        return spans
+    }
+
+    /// Grows an edit range so concealed syntax can never be orphaned: a
+    /// range touching a span's delimiters swallows the whole span, and a
+    /// deletion covering a span's entire content takes the delimiters with
+    /// it (an empty skeleton like `` would surface raw syntax).
+    private func normalizedEditRange(_ range: NSRange, isDeletion: Bool) -> NSRange {
+        var grown = range
+        var changed = true
+        while changed {
+            changed = false
+            var candidates = inlineSpans(around: grown.location)
+            if NSMaxRange(grown) > grown.location {
+                candidates += inlineSpans(around: max(NSMaxRange(grown) - 1, 0))
+            }
+            for span in candidates {
+                guard NSIntersectionRange(grown, span.range).length > 0 else { continue }
+                let containsWhole = grown.location <= span.range.location && NSMaxRange(grown) >= NSMaxRange(span.range)
+                if containsWhole { continue }
+                let openRange = NSRange(location: span.range.location,
+                                        length: span.content.location - span.range.location)
+                let closeRange = NSRange(location: NSMaxRange(span.content),
+                                         length: NSMaxRange(span.range) - NSMaxRange(span.content))
+                let touchesMarkers = NSIntersectionRange(grown, openRange).length > 0
+                    || NSIntersectionRange(grown, closeRange).length > 0
+                let coversContent = grown.location <= span.content.location
+                    && NSMaxRange(grown) >= NSMaxRange(span.content)
+                if touchesMarkers || (isDeletion && coversContent) {
+                    let union = NSUnionRange(grown, span.range)
+                    if union != grown {
+                        grown = union
+                        changed = true
+                    }
+                }
+            }
+        }
+        return grown
+    }
+
+    /// Deletes one visible character; if it was the entire content of a
+    /// span, the whole span goes with it (never leave an empty skeleton).
+    private func deleteVisibleCharacter(_ charRange: NSRange, caretAfter: Int? = nil) {
+        if let span = inlineSpans(around: charRange.location).first(where: { $0.content == charRange }) {
+            insertText("", replacementRange: span.range)
+            setSelectedRange(NSRange(location: min(caretAfter ?? span.range.location, span.range.location), length: 0))
+        } else {
+            insertText("", replacementRange: charRange)
+            if let caretAfter {
+                setSelectedRange(NSRange(location: min(caretAfter, charRange.location), length: 0))
+            }
+        }
     }
 
     // MARK: - Continuing inline styles at span edges
@@ -224,14 +345,29 @@ final class EditorTextView: NSTextView {
         // Typing at the end of a bold/italic/code/color span continues the
         // style. Whitespace stays outside: a trailing space inside the
         // delimiters would invalidate the markdown span.
-        if replacementRange.location == NSNotFound, !hasMarkedText(),
-           let first = inserted?.first, !first.isWhitespace {
+        if replacementRange.location == NSNotFound, !hasMarkedText() {
             let sel = selectedRange()
             if sel.length == 0 {
-                let inside = styleContinuationLocation(for: sel.location)
-                if inside != sel.location {
-                    setSelectedRange(NSRange(location: inside, length: 0))
+                if let first = inserted?.first, !first.isWhitespace {
+                    let inside = styleContinuationLocation(for: sel.location)
+                    if inside != sel.location {
+                        setSelectedRange(NSRange(location: inside, length: 0))
+                    }
                 }
+                // A caret at a span's visual start is just after the opening
+                // concealed markers; typing there belongs BEFORE the span
+                // (space before `code`, not ` code` inside it).
+                let caret = selectedRange().location
+                if caret == sel.location,
+                   let span = inlineSpans(around: caret).first(where: {
+                       $0.content.location == caret && $0.range.location < caret
+                   }) {
+                    setSelectedRange(NSRange(location: span.range.location, length: 0))
+                }
+            } else {
+                // Typing over a selection: never let it orphan delimiters.
+                let grown = normalizedEditRange(sel, isDeletion: false)
+                if grown != sel { setSelectedRange(grown) }
             }
         }
         super.insertText(string, replacementRange: replacementRange)

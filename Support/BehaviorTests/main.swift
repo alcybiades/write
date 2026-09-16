@@ -256,5 +256,62 @@ tv = makeTV("***word***", caret: 10)
 type(tv, "x")
 check("continue combined span at end", tv.string, "***wordx***")
 
+// Spans are atomic: typing at a span's visual start lands before it.
+tv = makeTV("see `code` here", caret: 5)  // content start, after hidden `
+tv.rehighlight()
+type(tv, " ")
+check("space at chip start goes before", tv.string, "see  `code` here")
+
+tv = makeTV("see `code` here", caret: 5)
+tv.rehighlight()
+type(tv, "x")
+check("letter at chip start goes before", tv.string, "see x`code` here")
+
+tv = makeTV("say **bold** now", caret: 6)
+tv.rehighlight()
+type(tv, "x")
+check("letter at bold start goes before", tv.string, "say x**bold** now")
+
+// Deleting a span's only content removes the whole span, never `` or ****.
+tv = makeTV("a `x` b", caret: 4)
+tv.rehighlight()
+tv.deleteBackward(nil)
+check("backspace sole code char removes span", tv.string, "a  b")
+
+tv = makeTV("a **x** b", caret: 5)
+tv.rehighlight()
+tv.deleteBackward(nil)
+check("backspace sole bold char removes span", tv.string, "a  b")
+
+tv = makeTV("a <span style=\"color:#FF0000\">x</span> b", caret: 31)
+tv.rehighlight()
+tv.deleteBackward(nil)
+check("backspace sole colored char removes span", tv.string, "a  b")
+
+tv = makeTV("a `x` b", caret: 3)
+tv.rehighlight()
+tv.deleteForward(nil)
+check("fwd delete sole code char removes span", tv.string, "a  b")
+
+// Selections touching delimiters swallow the whole span on delete.
+tv = makeTV("a `code` b", caret: 0)
+tv.rehighlight()
+tv.setSelectedRange(NSRange(location: 2, length: 3))  // "`co"
+tv.deleteBackward(nil)
+check("delete across opening marker takes span", tv.string, "a  b")
+
+tv = makeTV("a `code` b", caret: 0)
+tv.rehighlight()
+tv.setSelectedRange(NSRange(location: 3, length: 4))  // "code" (all content)
+tv.deleteBackward(nil)
+check("delete full content takes delimiters", tv.string, "a  b")
+
+// Typing over the full content keeps the span and replaces its text.
+tv = makeTV("a `code` b", caret: 0)
+tv.rehighlight()
+tv.setSelectedRange(NSRange(location: 3, length: 4))
+type(tv, "npm")
+check("typing over content keeps chip", tv.string, "a `npm` b")
+
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

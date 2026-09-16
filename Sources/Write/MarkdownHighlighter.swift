@@ -60,7 +60,7 @@ final class MarkdownHighlighter {
     // the closer's guards are what keep this from matching inside `**bold**`.
     static let italicText = MarkdownHighlighter.regex(#"(?<!\w)(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
     static let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
-    private let linkText = MarkdownHighlighter.regex(#"\[([^\]\n]*)\]\(([^)\n]*)\)"#)
+    static let linkText = MarkdownHighlighter.regex(#"\[([^\]\n]*)\]\(([^)\n]*)\)"#)
     static let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
 
     private var isHighlighting = false
@@ -274,7 +274,7 @@ final class MarkdownHighlighter {
                 mark(delim)
             }
         }
-        linkText.enumerateMatches(in: line, range: localRange) { m, _, _ in
+        Self.linkText.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m else { return }
             let r = global(m.range)
             let textRange = global(m.range(at: 1))
