@@ -96,7 +96,8 @@ final class BreadcrumbBar: NSView {
                 let button = NSButton(title: name, target: self, action: #selector(navigate(_:)))
                 button.isBordered = false; button.bezelStyle = .inline
                 button.font = Theme.font(size: 12.5); button.contentTintColor = Theme.dim
-                button.tag = index; button.toolTip = path.path
+                // Keep scrolling headers out of AppKit's tooltip manager.
+                button.tag = index
                 button.setAccessibilityLabel("Open gallery: " + name)
                 append(button, size: button.fittingSize)
             }

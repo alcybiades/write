@@ -65,7 +65,9 @@ private final class MediaItem: NSCollectionViewItem {
         stopLoading()
         representedURL = url
         textField?.stringValue = url.lastPathComponent
-        view.toolTip = url.lastPathComponent
+        // Native tooltip display can synchronously block on WindowServer
+        // while cells move beneath a stationary pointer. The caption and
+        // accessibility label already expose the filename.
         thumbnail.setAccessibilityLabel(url.lastPathComponent)
     }
     func loadThumbnail(scale: CGFloat) {
