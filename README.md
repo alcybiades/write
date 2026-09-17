@@ -63,7 +63,10 @@ the session. **File → Close Folder** removes the sidebar and keeps your tabs.
   Offscreen requests are cancelled and reusable cells release their images. A 64 MB
   decoded thumbnail cache and a 256 MB disk cache under `~/Library/Caches/com.grant.write/`
   avoid repeated decoding; editing a source invalidates its cached thumbnail.
-  Fixed-size tiles present decoded pixels directly to Core Animation; breadcrumb
+  Workers deliver decoded `CGImage` pixels directly; loading/error symbols are
+  rasterized once on the gallery scan queue. Cells never convert or rasterize
+  images on the main thread. Memory-pressure cache cleanup also runs off main.
+  Fixed-size tiles present those pixels directly to Core Animation; breadcrumb
   widths are measured once when configured, keeping scrolling out of Auto Layout.
   Opened images use a separate queue and the original native resolution, with no
   lossy re-encoding or preview-size cap. Original pixels are released on leaving

@@ -3,6 +3,21 @@ import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 
+/// Immutable rasters prepared on the gallery scan queue before cells appear.
+/// Never ask AppKit to rasterize a symbol while scrolling or reusing a cell.
+struct GallerySymbols {
+    let loading: CGImage?
+    let failed: CGImage?
+    static let shared: GallerySymbols = {
+        precondition(!Thread.isMainThread)
+        func raster(_ name: String) -> CGImage? {
+            let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+            return symbol?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }
+        return GallerySymbols(loading: raster("photo"), failed: raster("exclamationmark.triangle"))
+    }()
+}
+
 /// Owned by a visible cell/viewer. Cancellation also removes its completion,
 /// so a long scroll never leaves a queue of requests retaining old cells.
 final class ImageRequest {
@@ -129,7 +144,7 @@ final class ImageLoader {
     private final class Flight {
         let id = UUID()
         let operation = BlockOperation()
-        var subscribers: [UUID: (ImageRequest, (NSImage?) -> Void)] = [:]
+        var subscribers: [UUID: (ImageRequest, (CGImage?) -> Void)] = [:]
     }
     var cachedThumbnailBytes: Int { memory.byteCount }
     var pendingThumbnailCount: Int { flights.count }
@@ -142,7 +157,7 @@ final class ImageLoader {
         disk = ThumbnailDiskCache(directory: directory, limit: diskLimit)
         thumbnails.name = "Write.thumbnails"; thumbnails.maxConcurrentOperationCount = 2; thumbnails.qualityOfService = .userInitiated
         originals.name = "Write.originals"; originals.maxConcurrentOperationCount = 1; originals.qualityOfService = .userInitiated
-        pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
         pressure?.setEventHandler { [weak self] in self?.memory.removeAll() }
         pressure?.resume()
     }
@@ -154,11 +169,13 @@ final class ImageLoader {
     }
 
     @discardableResult
-    func thumbnail(_ url: URL, pixels: Int, completion: @escaping (NSImage?) -> Void) -> ImageRequest {
+    func thumbnail(_ url: URL, pixels: Int, completion: @escaping (CGImage?) -> Void) -> ImageRequest {
         precondition(Thread.isMainThread)
         let request = ImageRequest()
         let pixels = min(768, max(128, pixels))
-        let key = url.standardizedFileURL.path + "#\(pixels)"
+        // URL normalization and filesystem metadata belong to versionKey on
+        // the worker. The in-flight key only needs a cheap request identity.
+        let key = url.absoluteString + "#\(pixels)"
         let subscriber = UUID()
         let flight = flights[key] ?? Flight()
         flight.subscribers[subscriber] = (request, completion)
@@ -177,6 +194,7 @@ final class ImageLoader {
         operation.addExecutionBlock { [weak self, weak operation] in
             guard let self, operation?.isCancelled == false else { return }
             let image: CGImage? = autoreleasepool {
+                precondition(!Thread.isMainThread)
                 guard let version = Self.versionKey(url, pixels: pixels) else { return nil }
                 if let cached = self.memory.image(for: version) { self.record { $0.memoryHits += 1 }; return cached }
                 if let data = self.disk.read(version), let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -196,9 +214,8 @@ final class ImageLoader {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let completed = self.flights[key], completed.id == id else { return }
                 self.flights.removeValue(forKey: key)
-                let result = image.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
                 for (request, completion) in completed.subscribers.values where !request.isCancelled {
-                    request.onCancel = nil; completion(result)
+                    request.onCancel = nil; completion(image)
                 }
             }
         }
@@ -216,6 +233,7 @@ final class ImageLoader {
             guard operation?.isCancelled == false else { return }
             self?.record { $0.originalDecodes += 1 }
             let image: CGImage? = autoreleasepool {
+                precondition(!Thread.isMainThread)
                 guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
                       let width = properties[kCGImagePropertyPixelWidth] as? Int,

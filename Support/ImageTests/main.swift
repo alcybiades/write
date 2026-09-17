@@ -37,17 +37,29 @@ func writeFixture(_ url: URL, red: CGFloat, orientation: Int = 1) {
 writeFixture(original, red: 0.8)
 let originalBytes = try Data(contentsOf: original)
 let loader = ImageLoader(cacheDirectory: cache, memoryLimit: 1024 * 1024, diskLimit: 1024 * 1024)
+var symbolsReady = false
+DispatchQueue.global(qos: .userInitiated).async {
+    let symbols = GallerySymbols.shared
+    DispatchQueue.main.async {
+        check("loading and error symbols are rasterized off main", symbols.loading != nil && symbols.failed != nil)
+        symbolsReady = true
+    }
+}
+waitFor("background symbols", { symbolsReady })
 check("retina thumbnail size is display-sized", ImageLoader.thumbnailPixels(points: 160, scale: 2) == 384)
-var thumbnail: NSImage?
+var thumbnail: CGImage?
 var loaded = false
-let first = loader.thumbnail(original, pixels: 384) { thumbnail = $0; loaded = true }
+let first = loader.thumbnail(original, pixels: 384) {
+    check("thumbnail delivery is on main for view updates", Thread.isMainThread)
+    thumbnail = $0; loaded = true
+}
 var duplicateLoaded = false
 loader.thumbnail(original, pixels: 384) { duplicateLoaded = $0 != nil }
 check("identical visible requests share one flight", loader.pendingThumbnailCount == 1)
 waitFor("thumbnail", { loaded && duplicateLoaded })
-check("thumbnail is bounded and keeps aspect ratio", cgImage(thumbnail)?.width == 384 && cgImage(thumbnail)?.height == 288)
+check("thumbnail is bounded and keeps aspect ratio", thumbnail?.width == 384 && thumbnail?.height == 288)
 check("duplicate requests decode source once", loader.statistics.thumbnailDecodes == 1)
-let thumbCost = cgImage(thumbnail).map { $0.bytesPerRow * $0.height } ?? 0
+let thumbCost = thumbnail.map { $0.bytesPerRow * $0.height } ?? 0
 check("cache accounts for actual decoded bytes", loader.cachedThumbnailBytes == thumbCost)
 loaded = false
 loader.thumbnail(original, pixels: 384) { loaded = $0 != nil }
@@ -92,7 +104,7 @@ loader.original(rotated) { image in
 waitFor("oriented original", { loaded })
 loaded = false
 loader.thumbnail(rotated, pixels: 384) { image in
-    check("thumbnail also applies EXIF rotation", cgImage(image)?.width == 288 && cgImage(image)?.height == 384)
+    check("thumbnail also applies EXIF rotation", image?.width == 288 && image?.height == 384)
     loaded = true
 }
 waitFor("oriented thumbnail", { loaded })
