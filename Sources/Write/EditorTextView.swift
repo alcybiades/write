@@ -840,6 +840,59 @@ final class EditorTextView: NSTextView {
         }
     }
 
+    /// All fence lines in the document, in order.
+    private func fenceLineRanges() -> [NSRange] {
+        let ns = string as NSString
+        var result: [NSRange] = []
+        var position = 0
+        while position < ns.length {
+            let lineRange = ns.lineRange(for: NSRange(location: position, length: 0))
+            let line = ns.substring(with: lineRange)
+            if MarkdownHighlighter.fence.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil {
+                result.append(lineRange)
+            }
+            position = NSMaxRange(lineRange)
+        }
+        return result
+    }
+
+    /// Wraps the selected paragraphs in a fenced code block, or unwraps the
+    /// block the selection is inside (or has selected, fences included).
+    @objc func toggleCodeBlockMD(_ sender: Any?) {
+        let ns = string as NSString
+        let sel = selectedRange()
+        let paragraphs = ns.paragraphRange(for: sel)
+        let fences = fenceLineRanges()
+        let above = fences.filter { NSMaxRange($0) <= paragraphs.location }
+        let intersecting = fences.filter { NSIntersectionRange($0, paragraphs).length > 0 }
+
+        func removeFences(open: NSRange, close: NSRange?) {
+            if let close { insertText("", replacementRange: close) }
+            insertText("", replacementRange: open)
+            setSelectedRange(NSRange(location: min(open.location, (string as NSString).length), length: 0))
+        }
+
+        if above.count % 2 == 1 {
+            // Selection is inside a block: remove its enclosing fences.
+            let open = above.last!
+            let close = fences.first { $0.location >= paragraphs.location && NSIntersectionRange($0, open).length == 0 }
+            removeFences(open: open, close: close)
+            return
+        }
+        if let open = intersecting.first {
+            // Selection covers the block, fences included.
+            let close = fences.first { $0.location > open.location }
+            removeFences(open: open, close: close)
+            return
+        }
+
+        let insertEnd = NSMaxRange(paragraphs)
+        let endsWithNewline = insertEnd > paragraphs.location && ns.character(at: insertEnd - 1) == 0x0A
+        insertText(endsWithNewline ? "```\n" : "\n```", replacementRange: NSRange(location: insertEnd, length: 0))
+        insertText("```\n", replacementRange: NSRange(location: paragraphs.location, length: 0))
+        setSelectedRange(NSRange(location: paragraphs.location + 4, length: paragraphs.length))
+    }
+
     @objc func insertLinkMD(_ sender: Any?) {
         let ns = string as NSString
         let sel = selectedRange()

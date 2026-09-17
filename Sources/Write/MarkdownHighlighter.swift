@@ -45,7 +45,7 @@ final class MarkdownHighlighter {
     }
 
     private let heading = MarkdownHighlighter.regex(#"^(#{1,6})[ \t](.*)$"#)
-    private let fence = MarkdownHighlighter.regex(#"^\s*(```|~~~)"#)
+    static let fence = MarkdownHighlighter.regex(#"^\s*(```|~~~)"#)
     private let task = MarkdownHighlighter.regex(#"^\s*[-*+][ \t]\[[ xX]\][ \t]"#)
     private let bullet = MarkdownHighlighter.regex(#"^\s*[-*+][ \t]"#)
     private let ordered = MarkdownHighlighter.regex(#"^\s*\d+[.)][ \t]"#)
@@ -150,7 +150,7 @@ final class MarkdownHighlighter {
         codeStyle.lineHeightMultiple = Theme.lineHeightMultiple
         codeStyle.firstLineHeadIndent = Theme.codeBlockPadding
         codeStyle.headIndent = Theme.codeBlockPadding
-        if fence.firstMatch(in: line, range: localRange) != nil {
+        if Self.fence.firstMatch(in: line, range: localRange) != nil {
             inCodeBlock.toggle()
             ts.addAttributes([.font: monoFont, .foregroundColor: Theme.dim,
                               .backgroundColor: Theme.codeBlockBackground,

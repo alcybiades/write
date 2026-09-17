@@ -313,5 +313,27 @@ tv.setSelectedRange(NSRange(location: 3, length: 4))
 type(tv, "npm")
 check("typing over content keeps chip", tv.string, "a `npm` b")
 
+// Code block toggle: wrap paragraphs, unwrap from inside or from selection.
+tv = makeTV("one\ntwo\nthree\n", caret: 5)
+tv.rehighlight()
+tv.toggleCodeBlockMD(nil)
+check("code block wraps paragraph", tv.string, "one\n```\ntwo\n```\nthree\n")
+
+tv = makeTV("one\n```\ntwo\n```\nthree\n", caret: 9)
+tv.rehighlight()
+tv.toggleCodeBlockMD(nil)
+check("code block unwraps from inside", tv.string, "one\ntwo\nthree\n")
+
+tv = makeTV("one\n```\ntwo\n```\nthree\n", caret: 0)
+tv.rehighlight()
+tv.setSelectedRange(NSRange(location: 4, length: 11))  // fences + content
+tv.toggleCodeBlockMD(nil)
+check("code block unwraps from full selection", tv.string, "one\ntwo\nthree\n")
+
+tv = makeTV("only line", caret: 4)
+tv.rehighlight()
+tv.toggleCodeBlockMD(nil)
+check("code block wraps at EOF without newline", tv.string, "```\nonly line\n```")
+
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

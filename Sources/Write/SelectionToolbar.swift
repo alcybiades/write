@@ -38,6 +38,14 @@ final class SelectionToolbar {
         views.append(ToolbarIconButton(symbolName: "italic", fallback: "I", toolTip: "Italic") { [weak self] in
             self?.textView?.toggleItalicMD(nil)
         })
+        views.append(ToolbarIconButton(symbolName: "chevron.left.forwardslash.chevron.right",
+                                       fallback: "<>", toolTip: "Code") { [weak self] in
+            self?.textView?.toggleCodeMD(nil)
+        })
+        views.append(ToolbarIconButton(symbolName: "curlybraces",
+                                       fallback: "{}", toolTip: "Code Block") { [weak self] in
+            self?.textView?.toggleCodeBlockMD(nil)
+        })
 
         let divider = NSView()
         divider.wantsLayer = true
