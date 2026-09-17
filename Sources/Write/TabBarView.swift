@@ -15,23 +15,85 @@ final class TabBarView: NSView {
     /// Fired when a tab is dragged out of the bar; point is in screen coords.
     var onDetach: ((Int, NSPoint) -> Void)?
 
+    var onToggleSidebar: (() -> Void)?
+    var onMediaMode: ((Bool) -> Void)?
+    private let controls = NSView()
+    private let toggle = SidebarIconButton()
+    private let files = SidebarIconButton()
+    private let media = SidebarIconButton()
+    private var controlsWidth: NSLayoutConstraint!
     private let stack = NSStackView()
+    private let tabScroll = NSScrollView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         stack.orientation = .horizontal
         stack.spacing = 6
-        stack.alignment = .top
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        stack.alignment = .centerY
+        stack.translatesAutoresizingMaskIntoConstraints = true
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: Self.cornerPadding)
+        tabScroll.drawsBackground = false
+        tabScroll.hasHorizontalScroller = true
+        tabScroll.autohidesScrollers = true
+        tabScroll.scrollerStyle = .overlay
+        tabScroll.documentView = stack
+        tabScroll.translatesAutoresizingMaskIntoConstraints = false
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(controls)
+        addSubview(tabScroll)
+        for (button, symbol, label, action) in [
+            (toggle, "sidebar.left", "Toggle sidebar", #selector(toggleSidebar)),
+            (files, "doc", "Files", #selector(selectFiles)),
+            (media, "photo", "Media", #selector(selectMedia))
+        ] {
+            button.symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+            button.title = ""
+            button.toolTip = label
+            button.setAccessibilityLabel(label)
+            button.isBordered = false
+            button.bezelStyle = .regularSquare
+            button.target = self; button.action = action
+            button.wantsLayer = true; button.layer?.cornerRadius = 7
+            controls.addSubview(button)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 30), button.heightAnchor.constraint(equalToConstant: 31),
+                button.centerYAnchor.constraint(equalTo: tabScroll.centerYAnchor),
+            ])
+        }
+        controlsWidth = controls.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.cornerPadding),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Self.cornerPadding),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.cornerPadding),
+            controls.leadingAnchor.constraint(equalTo: leadingAnchor), controls.topAnchor.constraint(equalTo: topAnchor),
+            controls.bottomAnchor.constraint(equalTo: bottomAnchor), controlsWidth,
+            tabScroll.leadingAnchor.constraint(equalTo: controls.trailingAnchor, constant: Self.cornerPadding),
+            tabScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tabScroll.topAnchor.constraint(equalTo: topAnchor, constant: Self.cornerPadding),
+            tabScroll.heightAnchor.constraint(equalToConstant: 31),
+            toggle.leadingAnchor.constraint(equalTo: controls.leadingAnchor, constant: Self.cornerPadding),
+            files.leadingAnchor.constraint(equalTo: controls.leadingAnchor, constant: 55),
+            media.leadingAnchor.constraint(equalTo: controls.leadingAnchor, constant: 93),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func configureSidebar(visible: Bool, collapsed: Bool, width: CGFloat, mediaMode: Bool) {
+        controlsWidth.constant = visible ? (collapsed ? 45 : width) : 0
+        controls.isHidden = !visible
+        files.isHidden = collapsed; media.isHidden = collapsed
+        files.contentTintColor = mediaMode ? Theme.dim : Theme.foreground
+        media.contentTintColor = mediaMode ? Theme.foreground : Theme.dim
+        toggle.contentTintColor = Theme.dim
+        toggle.toolTip = collapsed ? "Expand sidebar" : "Collapse sidebar"
+        toggle.setAccessibilityLabel(toggle.toolTip)
+        toggle.chevronName = collapsed ? "chevron.right" : "chevron.left"
+        [toggle, files, media].forEach { $0.needsDisplay = true }
+        files.layer?.backgroundColor = NSColor.white.withAlphaComponent(mediaMode ? 0 : 0.08).cgColor
+        media.layer?.backgroundColor = NSColor.white.withAlphaComponent(mediaMode ? 0.08 : 0).cgColor
+    }
+    @objc private func toggleSidebar() { onToggleSidebar?() }
+    @objc private func selectFiles() { onMediaMode?(false) }
+    @objc private func selectMedia() { onMediaMode?(true) }
 
     func update(tabs: [(name: String, edited: Bool)], selected: Int) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -48,6 +110,12 @@ final class TabBarView: NSView {
         let plus = NewTabButton()
         plus.onClick = { [weak self] in self?.onNewTab?() }
         stack.addArrangedSubview(plus)
+        stack.setFrameSize(NSSize(width: stack.fittingSize.width, height: 31))
+        layoutSubtreeIfNeeded()
+        if stack.arrangedSubviews.indices.contains(selected) {
+            let selectedTab = stack.arrangedSubviews[selected]
+            selectedTab.scrollToVisible(selectedTab.bounds)
+        }
     }
 }
 
@@ -65,7 +133,7 @@ private final class NewTabButton: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: 30),
-            heightAnchor.constraint(equalToConstant: 30),
+            heightAnchor.constraint(equalToConstant: 31),
         ])
     }
 
@@ -170,8 +238,8 @@ private final class TabItemView: NSView {
         labelTrailingHover = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -28)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 13),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 7),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 31),
             labelTrailingNormal,
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -332,5 +400,22 @@ final class HoverCloseButton: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         drawGlyphCentered("×", size: 22, color: hovered ? Theme.foreground : Theme.dim, in: bounds)
+    }
+}
+
+/// Draw symbols directly, like the other tab controls, without AppKit's bezel.
+private final class SidebarIconButton: NSButton {
+    var symbolImage: NSImage?
+    var chevronName: String?
+    override func draw(_ dirtyRect: NSRect) {
+        guard let symbolImage else { return }
+        let image = symbolImage.withSymbolConfiguration(.init(paletteColors: [contentTintColor ?? Theme.dim])) ?? symbolImage
+        let scale = min(16 / image.size.width, 16 / image.size.height)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        image.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height))
+        if let chevronName, let chevron = NSImage(systemSymbolName: chevronName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(paletteColors: [contentTintColor ?? Theme.dim])) {
+            chevron.draw(in: NSRect(x: bounds.midX + 1, y: bounds.midY - 3, width: 3, height: 6))
+        }
     }
 }

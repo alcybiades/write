@@ -165,6 +165,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         (keyController ?? makeWindow()).openDocument(sender)
     }
 
+    @objc func openFolder(_ sender: Any?) {
+        (keyController ?? makeWindow()).openFolder(sender)
+    }
+
     // MARK: - Recent files
 
     private var recentFiles: [String] {
@@ -216,11 +220,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func sessionChanged() {
         let entries: [[String: Any]] = controllers.compactMap { controller in
             let files = controller.documents.compactMap { $0.url?.path }
-            guard !files.isEmpty, let window = controller.window else { return nil }
+            guard !files.isEmpty || controller.workspace != nil, let window = controller.window else { return nil }
             return [
                 "files": files,
                 "current": controller.currentDocument.url?.path ?? "",
                 "frame": NSStringFromRect(window.frame),
+                "workspace": controller.workspace?.root.path ?? "",
+                "sidebarCollapsed": controller.sidebarCollapsed,
+                "sidebarWidth": Double(controller.sidebarWidth),
+                "mediaMode": controller.mediaMode,
             ]
         }
         UserDefaults.standard.set(entries, forKey: "sessionWindows")
@@ -230,9 +238,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for entry in savedWindows {
             let files = (entry["files"] as? [String] ?? [])
                 .filter { FileManager.default.fileExists(atPath: $0) }
-            guard !files.isEmpty else { continue }
+            guard !files.isEmpty || !(entry["workspace"] as? String ?? "").isEmpty else { continue }
             let controller = makeWindow(frame: entry["frame"] as? String)
-            for path in files { controller.open(url: URL(fileURLWithPath: path)) }
+            for path in files { controller.restoreTab(url: URL(fileURLWithPath: path)) }
+            if let root = entry["workspace"] as? String, !root.isEmpty,
+               FileManager.default.fileExists(atPath: root) {
+                controller.restoreWorkspace(root: URL(fileURLWithPath: root), collapsed: entry["sidebarCollapsed"] as? Bool ?? false,
+                                            width: CGFloat(entry["sidebarWidth"] as? Double ?? 220), media: entry["mediaMode"] as? Bool ?? false)
+            }
             if let currentPath = entry["current"] as? String,
                let index = controller.documents.firstIndex(where: { $0.url?.path == currentPath }) {
                 controller.switchTab(to: index)
