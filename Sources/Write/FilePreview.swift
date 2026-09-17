@@ -1,35 +1,70 @@
 import AppKit
-import ImageIO
+
+/// Present already-decoded pixels directly. NSImageView's intrinsic-size and
+/// alignment invalidations otherwise propagate through the window on every
+/// asynchronous thumbnail replacement, even though the tile size is fixed.
+final class GalleryThumbnailView: NSView {
+    var image: NSImage? {
+        didSet {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.contents = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            CATransaction.commit()
+        }
+    }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        layer?.contentsGravity = .resizeAspect
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+/// Fixed-size tiles keep image intrinsic-size changes out of the window's
+/// Auto Layout engine while thumbnails arrive during scrolling.
+private final class MediaTile: NSView {
+    let thumbnail = GalleryThumbnailView()
+    let caption = NSTextField(labelWithString: "")
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        caption.font = Theme.font(size: 10)
+        caption.textColor = Theme.dim
+        caption.alignment = .center
+        caption.lineBreakMode = .byTruncatingMiddle
+        addSubview(thumbnail); addSubview(caption)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layout() {
+        super.layout()
+        caption.frame = NSRect(x: 0, y: 5, width: bounds.width, height: 16)
+        thumbnail.frame = NSRect(x: 4, y: 29, width: max(0, bounds.width - 8), height: max(0, bounds.height - 33))
+    }
+}
 
 private final class MediaItem: NSCollectionViewItem {
     private var representedURL: URL?
     private var request: ImageRequest?
     private var generation = UUID()
     private var loadedPixels = 0
+    private var thumbnail: GalleryThumbnailView { (view as! MediaTile).thumbnail }
+    var thumbnailView: NSView { thumbnail }
     override func loadView() {
-        view = NSView()
-        let image = NSImageView()
-        image.imageScaling = .scaleProportionallyUpOrDown
-        let label = NSTextField(labelWithString: "")
-        label.font = Theme.font(size: 10)
-        label.textColor = Theme.dim
-        label.alignment = .center
-        label.lineBreakMode = .byTruncatingMiddle
-        view.addSubview(image); view.addSubview(label)
-        image.translatesAutoresizingMaskIntoConstraints = false; label.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            image.topAnchor.constraint(equalTo: view.topAnchor, constant: 4), image.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
-            image.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4), image.bottomAnchor.constraint(equalTo: label.topAnchor, constant: -8),
-            label.heightAnchor.constraint(equalToConstant: 16),
-            label.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -5), label.leadingAnchor.constraint(equalTo: view.leadingAnchor), label.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
-        imageView = image; textField = label
+        let tile = MediaTile()
+        view = tile
+        textField = tile.caption
     }
+
     func configure(_ url: URL) {
         stopLoading()
         representedURL = url
         textField?.stringValue = url.lastPathComponent
         view.toolTip = url.lastPathComponent
+        thumbnail.setAccessibilityLabel(url.lastPathComponent)
     }
     func loadThumbnail(scale: CGFloat) {
         guard let url = representedURL else { return }
@@ -38,16 +73,16 @@ private final class MediaItem: NSCollectionViewItem {
         request?.cancel()
         generation = UUID(); let token = generation
         loadedPixels = pixels
-        imageView?.image = NSImage(systemSymbolName: "photo", accessibilityDescription: "Loading image")
+        thumbnail.image = NSImage(systemSymbolName: "photo", accessibilityDescription: "Loading image")
         request = ImageLoader.shared.thumbnail(url, pixels: pixels) { [weak self] image in
             guard let self, self.generation == token else { return }
-            self.imageView?.image = image ?? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Unable to load image")
+            self.thumbnail.image = image ?? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Unable to load image")
         }
     }
     func stopLoading() {
         request?.cancel(); request = nil
         generation = UUID(); loadedPixels = 0
-        imageView?.image = nil
+        thumbnail.image = nil
     }
     override func prepareForReuse() {
         super.prepareForReuse()
@@ -219,7 +254,7 @@ final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDel
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         guard let path = indexPaths.first, sections.indices.contains(path.section), sections[path.section].images.indices.contains(path.item),
               let item = collectionView.item(at: path) else { return }
-        let image = item.imageView ?? item.view
+        let image = (item as? MediaItem)?.thumbnailView ?? item.view
         onOpen?(sections[path.section].images[path.item], image.convert(image.bounds, to: nil))
     }
 }

@@ -57,56 +57,64 @@ enum MediaGallery {
 final class BreadcrumbBar: NSView {
     var onNavigate: ((URL) -> Void)?
     private let scroll = NSScrollView()
-    private let stack = NSStackView()
+    private let content = NSView()
+    private var contentWidth: CGFloat = 0
     private var paths: [URL] = []
     private var revealEnd = false
     override init(frame: NSRect) {
         super.init(frame: frame)
-        stack.orientation = .horizontal; stack.alignment = .centerY; stack.spacing = 7
         scroll.drawsBackground = false
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
-        scroll.documentView = stack
+        scroll.documentView = content
         addSubview(scroll)
     }
     required init?(coder: NSCoder) { fatalError() }
     func configure(url: URL, root: URL?, isImage: Bool = false) {
         paths = MediaGallery.breadcrumbs(to: url, root: root)
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        content.subviews.forEach { $0.removeFromSuperview() }
+        contentWidth = 0
+        func append(_ view: NSView, size: NSSize) {
+            view.frame = NSRect(x: contentWidth, y: (28 - size.height) / 2, width: size.width, height: size.height)
+            content.addSubview(view)
+            contentWidth += size.width + 7
+        }
         for (index, path) in paths.enumerated() {
             if index > 0 {
                 let separator = NSImageView()
                 separator.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
                 separator.contentTintColor = Theme.dim
-                separator.translatesAutoresizingMaskIntoConstraints = false
-                separator.widthAnchor.constraint(equalToConstant: 5).isActive = true
-                separator.heightAnchor.constraint(equalToConstant: 9).isActive = true
-                stack.addArrangedSubview(separator)
+                append(separator, size: NSSize(width: 5, height: 9))
             }
             let name = path.lastPathComponent.isEmpty ? "/" : path.lastPathComponent
             if isImage && index == paths.count - 1 {
                 let label = NSTextField(labelWithString: name)
                 label.font = Theme.font(size: 12.5); label.textColor = Theme.heading
-                stack.addArrangedSubview(label)
+                append(label, size: label.fittingSize)
             } else {
                 let button = NSButton(title: name, target: self, action: #selector(navigate(_:)))
                 button.isBordered = false; button.bezelStyle = .inline
                 button.font = Theme.font(size: 12.5); button.contentTintColor = Theme.dim
                 button.tag = index; button.toolTip = path.path
                 button.setAccessibilityLabel("Open gallery: " + name)
-                stack.addArrangedSubview(button)
+                append(button, size: button.fittingSize)
             }
         }
+        contentWidth = max(0, contentWidth - 7)
         revealEnd = true
         needsLayout = true
     }
     override func layout() {
         super.layout()
         scroll.frame = bounds
-        stack.frame = NSRect(x: 0, y: 0, width: stack.fittingSize.width, height: bounds.height)
-        if revealEnd, let last = stack.arrangedSubviews.last {
-            stack.layoutSubtreeIfNeeded()
+        content.frame = NSRect(x: 0, y: 0, width: contentWidth, height: bounds.height)
+        for view in content.subviews {
+            var frame = view.frame
+            frame.origin.y = (bounds.height - frame.height) / 2
+            if view.frame != frame { view.frame = frame }
+        }
+        if revealEnd, let last = content.subviews.last {
             last.scrollToVisible(last.bounds)
             revealEnd = false
         }

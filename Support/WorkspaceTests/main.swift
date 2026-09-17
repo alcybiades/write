@@ -105,6 +105,13 @@ let galleryScroll = preview.subviews.first { $0 is NSScrollView } as! NSScrollVi
 let groupedCollection = galleryScroll.documentView as! NSCollectionView
 groupedCollection.scrollToItems(at: Set([IndexPath(item: 0, section: 1)]), scrollPosition: .top)
 snapshot("gallery-grouped")
+// Vertical wheel events over a path header must keep scrolling the gallery.
+let headerScroll = galleryDescendants(groupedCollection).compactMap { $0 as? NSScrollView }.first!
+func galleryDescendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + galleryDescendants($0) } }
+galleryScroll.contentView.scroll(to: .zero)
+let headerWheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -80, wheel2: 0, wheel3: 0)!
+headerScroll.scrollWheel(with: NSEvent(cgEvent: headerWheel)!)
+check("wheel over breadcrumbs scrolls parent gallery", galleryScroll.contentView.bounds.minY > 0)
 var galleryPosition = galleryScroll.contentView.bounds.origin
 func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
 let bar = controller.window!.contentView!.subviews.first { $0 is TabBarView }!
@@ -236,6 +243,10 @@ while preview.sections.first?.images.count != 500 && Date() < galleryDeadline {
 RunLoop.current.run(until: Date().addingTimeInterval(0.3))
 let visible = groupedCollection.visibleItems()
 let newDecodes = ImageLoader.shared.statistics.thumbnailDecodes - beforeDecodes
+let visibleThumbnails = visible.flatMap { galleryDescendants($0.view).compactMap { $0 as? GalleryThumbnailView } }
+check("visible thumbnails have composited pixels", !visibleThumbnails.isEmpty && visibleThumbnails.allSatisfy { $0.image != nil && $0.layer?.contents != nil })
+check("thumbnail presentation preserves aspect ratio", visibleThumbnails.allSatisfy { $0.layer?.contentsGravity == .resizeAspect })
+check("thumbnail filenames remain accessible", visibleThumbnails.allSatisfy { $0.accessibilityLabel()?.hasPrefix("Image ") == true })
 check("large gallery indexes all images", preview.sections.first?.images.count == 500)
 check("large gallery only decodes visible cells", !visible.isEmpty && visible.count < 40 && newDecodes <= visible.count + 4)
 check("large gallery pending work is bounded by viewport", ImageLoader.shared.pendingThumbnailCount <= visible.count)
@@ -243,7 +254,9 @@ print(String(format: "GALLERY: 500 files, %d visible cells, %d thumbnail decodes
 groupedCollection.scrollToItems(at: Set([IndexPath(item: 499, section: 0)]), scrollPosition: .bottom)
 RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 let nowVisible = groupedCollection.visibleItems()
-check("offscreen gallery cells release decoded pixels", visible.filter { old in !nowVisible.contains { $0 === old } }.allSatisfy { $0.imageView?.image == nil })
+check("offscreen gallery cells release decoded pixels", visible.filter { old in !nowVisible.contains { $0 === old } }.allSatisfy { old in
+    galleryDescendants(old.view).compactMap { $0 as? GalleryThumbnailView }.allSatisfy { $0.image == nil && $0.layer?.contents == nil }
+})
 controller.open(url: imageURL, forceNewTab: true)
 RunLoop.current.run(until: Date().addingTimeInterval(0.15))
 let originalImageView = preview.subviews.first { $0 is NSImageView } as! NSImageView

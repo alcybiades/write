@@ -2,7 +2,7 @@ APP    := Write
 BUNDLE := dist/$(APP).app
 BIN    := .build/release/$(APP)
 
-.PHONY: build app run install clean test
+.PHONY: build app run install clean test benchmark-gallery
 
 test:
 	@mkdir -p .build/tests
@@ -18,6 +18,11 @@ test:
 	@.build/tests/workspace
 	@swiftc -o .build/tests/images Sources/Write/ImageLoader.swift Support/ImageTests/main.swift
 	@.build/tests/images
+
+benchmark-gallery:
+	@mkdir -p .build/tests
+	@swiftc -O -whole-module-optimization -o .build/tests/gallery-benchmark $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/GalleryBenchmark/main.swift
+	@.build/tests/gallery-benchmark "$(GALLERY)"
 
 build:
 	swift build -c release
