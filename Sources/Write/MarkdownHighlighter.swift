@@ -1,5 +1,9 @@
 import AppKit
 
+extension NSAttributedString.Key {
+    static let fileReference = NSAttributedString.Key("WriteFileReference")
+}
+
 /// Pads code background rects: block bands stretch back to the margin (the
 /// text indent becomes interior padding) and inline chips get a little air
 /// around the glyphs.
@@ -60,7 +64,7 @@ final class MarkdownHighlighter {
     // the closer's guards are what keep this from matching inside `**bold**`.
     static let italicText = MarkdownHighlighter.regex(#"(?<!\w)(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])"#)
     static let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
-    static let linkText = MarkdownHighlighter.regex(#"\[([^\]\n]*)\]\(([^)\n]*)\)"#)
+    static let linkText = MarkdownHighlighter.regex(#"\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]*)\)"#)
     static let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
 
     private var isHighlighting = false
@@ -177,7 +181,6 @@ final class MarkdownHighlighter {
             let prefix = NSRange(location: lineRange.location, length: level + 1)
             ts.addAttributes([.foregroundColor: Theme.dim, .strokeWidth: 0.0], range: prefix)
             mark(prefix)
-            return
         }
         if rule.firstMatch(in: line, range: localRange) != nil, line.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 {
             ts.addAttribute(.foregroundColor, value: Theme.dim, range: lineRange)
@@ -274,8 +277,9 @@ final class MarkdownHighlighter {
                 mark(delim)
             }
         }
+        let codeRanges = Self.inlineCode.matches(in: line, range: localRange).map(\.range)
         Self.linkText.enumerateMatches(in: line, range: localRange) { m, _, _ in
-            guard let m else { return }
+            guard let m, !codeRanges.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) else { return }
             let r = global(m.range)
             let textRange = global(m.range(at: 1))
             ts.addAttribute(.foregroundColor, value: Theme.dim, range: r)
@@ -283,6 +287,21 @@ final class MarkdownHighlighter {
                 .foregroundColor: Theme.link,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
             ], range: textRange)
+            let label = (line as NSString).substring(with: m.range(at: 1))
+            if label.hasPrefix("@") {
+                let (font, synthetic) = Theme.boldFont(size: Theme.fontSize)
+                ts.addAttributes([
+                    .font: font, .foregroundColor: NSColor(hex: 0x4169E1),
+                    .underlineStyle: 0,
+                    .fileReference: (line as NSString).substring(with: m.range(at: 2)),
+                ], range: textRange)
+                if synthetic { ts.addAttribute(.strokeWidth, value: -3.0, range: textRange) }
+                // Markdown escapes in filenames remain in the source only.
+                let escapes = Self.regex(#"\\(?=[\[\]\\])"#)
+                escapes.enumerateMatches(in: label, range: NSRange(location: 0, length: (label as NSString).length)) { match, _, _ in
+                    if let match { mark(NSRange(location: textRange.location + match.range.location, length: 1)) }
+                }
+            }
             // Hide "[", then "](url)".
             mark(NSRange(location: r.location, length: 1))
             mark(NSRange(location: NSMaxRange(textRange), length: NSMaxRange(r) - NSMaxRange(textRange)))

@@ -8,10 +8,14 @@ test:
 	@mkdir -p .build/tests
 	@swiftc -o .build/tests/behavior \
 		Sources/Write/Theme.swift \
+		Sources/Write/Workspace.swift \
+		Sources/Write/ReferencePicker.swift \
 		Sources/Write/MarkdownHighlighter.swift \
 		Sources/Write/EditorTextView.swift \
 		Support/BehaviorTests/main.swift
 	@.build/tests/behavior
+	@swiftc -o .build/tests/workspace $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/WorkspaceTests/main.swift
+	@.build/tests/workspace
 
 build:
 	swift build -c release

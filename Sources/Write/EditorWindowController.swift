@@ -15,6 +15,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private var scrollView: NSScrollView!
     private var tabBar: TabBarView!
     private var statusLabel: NSTextField!
+    private var statusPill: NSView!
+    private let sidebar = FolderSidebar()
+    private let divider = SidebarDivider()
+    private let preview = FilePreview()
+    private var sidebarWidthConstraint: NSLayoutConstraint!
+    private(set) var workspace: Workspace?
+    private(set) var sidebarCollapsed = false
+    private(set) var sidebarWidth: CGFloat = 220
+    private(set) var mediaMode = false
+    private var previewOrigin: NSRect?
     // The inline title is an always-editable NSTextView: one view for both
     // reading and editing means the glyphs cannot shift when editing starts
     // (NSTextField swaps in a field editor with subtly different metrics).
@@ -123,7 +133,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         // A translucent in-window blur the same color as the backdrop: over
         // empty background it is invisible (blurring a flat color yields the
         // same color); it only becomes apparent when text passes beneath.
-        let statusPill = NSView()
+        statusPill = NSView()
         statusPill.wantsLayer = true
         statusPill.layerUsesCoreImageFilters = true
         statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.25).cgColor
@@ -137,6 +147,56 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         statusPill.addSubview(statusLabel)
 
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(sidebar)
+        container.addSubview(divider)
+        container.addSubview(preview)
+        sidebarWidthConstraint = sidebar.widthAnchor.constraint(equalToConstant: 0)
+        tabBar.onToggleSidebar = { [weak self] in
+            guard let self else { return }
+            self.sidebarCollapsed.toggle(); self.updateSidebar(); self.app?.sessionChanged()
+        }
+        tabBar.onMediaMode = { [weak self] media in
+            guard let self else { return }
+            self.mediaMode = media; self.sidebar.mediaMode = media; self.updateSidebar(); self.refreshChrome()
+        }
+        sidebar.onRefresh = { [weak self] in
+            guard let self else { return }
+            self.workspace?.refreshIndex()
+            if self.currentDocument.kind == .folder { self.refreshChrome() }
+        }
+        sidebar.onOpen = { [weak self] url, folder in
+            if folder { self?.openFolderTab(url) } else { self?.open(url: url, forceNewTab: true) }
+        }
+        divider.onResize = { [weak self] width in
+            guard let self else { return }
+            self.sidebarCollapsed = width < 90
+            if !self.sidebarCollapsed { self.sidebarWidth = max(150, min(width, (self.window?.frame.width ?? 640) - 240)) }
+            self.updateSidebar(); self.app?.sessionChanged()
+        }
+        preview.onNavigate = { [weak self] url in self?.openFolderTab(url) }
+        preview.onOpen = { [weak self] url, origin in
+            self?.previewOrigin = origin
+            self?.open(url: url, forceNewTab: true)
+            self?.previewOrigin = nil
+        }
+        textView.referenceCandidates = { [weak self] query in
+            guard let workspace = self?.workspace else { return [] }
+            return workspace.matches(query).map { ($0, FileReference.relativePath(to: $0, from: workspace.root)) }
+        }
+        textView.onInsertReference = { [weak self] url, range in
+            guard let self else { return }
+            if self.currentDocument.url == nil { self.promptForSaveURL() }
+            guard let source = self.currentDocument.url else { return }
+            self.textView.insertText(FileReference.markdown(to: url, from: source), replacementRange: range)
+        }
+        textView.onOpenReference = { [weak self] destination in
+            guard let self, let source = self.currentDocument.url,
+                  let url = FileReference.resolve(destination, from: source) else { return }
+            self.open(url: url, forceNewTab: true)
+        }
         container.addSubview(tabBar)
         container.addSubview(scrollView)
         container.addSubview(statusPill)
@@ -148,7 +208,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             tabBar.heightAnchor.constraint(equalToConstant: TabBarView.cornerPadding + 31 + 8),
             scrollView.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: tabBar.bottomAnchor), sidebar.bottomAnchor.constraint(equalTo: container.bottomAnchor), sidebarWidthConstraint,
+            divider.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -3), divider.widthAnchor.constraint(equalToConstant: 6),
+            divider.topAnchor.constraint(equalTo: sidebar.topAnchor), divider.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            preview.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor), preview.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            preview.topAnchor.constraint(equalTo: scrollView.topAnchor), preview.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             statusLabel.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 9),
             statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -9),
@@ -183,6 +249,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         } else {
             window.center()
         }
+        updateSidebar()
         textView.rehighlight()
         let length = (currentDocument.storage.string as NSString).length
         textView.setSelectedRange(NSIntersectionRange(currentDocument.selection, NSRange(location: 0, length: length)))
@@ -192,6 +259,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     func windowWillClose(_ notification: Notification) {
+        textView.dismissReferences()
         autosaveTimer?.invalidate()
         savedFlashTimer?.invalidate()
         selectionToolbar.teardown()
@@ -201,10 +269,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     func windowDidResignKey(_ notification: Notification) {
         selectionToolbar.hide()
+        textView.dismissReferences()
     }
 
     @objc private func viewResized() {
         updateInsets()
+        updateSidebar()
     }
 
     @objc private func scrolled() {
@@ -264,6 +334,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     func switchTab(to index: Int) {
         guard documents.indices.contains(index) else { return }
+        textView.dismissReferences()
         commitTitleIfEditing()
         flushAutosave()
         currentDocument.selection = textView.selectedRange()
@@ -276,7 +347,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         textView.setSelectedRange(sel.location <= length ? sel : NSRange(location: 0, length: 0))
         textView.scrollRangeToVisible(textView.selectedRange())
         refreshChrome()
-        window?.makeFirstResponder(textView)
+        window?.makeFirstResponder(doc.kind == .markdown ? textView : preview)
     }
 
     @objc func newTab(_ sender: Any?) {
@@ -324,7 +395,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         textView.rehighlight()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         refreshChrome()
-        window?.makeFirstResponder(textView)
+        window?.makeFirstResponder(currentDocument.kind == .markdown ? textView : preview)
     }
 
     @objc func nextTab(_ sender: Any?) {
@@ -336,6 +407,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     private func refreshChrome() {
+        let editable = currentDocument.kind == .markdown
+        scrollView.isHidden = !editable
+        preview.isHidden = editable
+        statusPill.isHidden = !editable
+        textView.isEditable = editable
+        titleView.isEditable = editable
+        if !editable {
+            selectionToolbar.hide()
+            preview.show(currentDocument, root: workspace?.root, mediaMode: mediaMode, from: previewOrigin)
+        } else { preview.suspend() }
         tabBar.update(tabs: documents.map { ($0.name, $0.edited) }, selected: current)
         updateStatus()
         app?.sessionChanged()
@@ -455,6 +536,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             try FileManager.default.moveItem(at: url, to: newURL)
             doc.url = newURL
             app?.recentFileRenamed(from: url, to: newURL)
+            sidebar.refresh(); workspace?.refreshIndex()
         } catch {
             NSSound.beep()
             titleView.string = doc.displayTitle
@@ -464,19 +546,86 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     // MARK: - File operations
 
+    private func updateSidebar() {
+        let visible = workspace != nil
+        let width = visible && !sidebarCollapsed ? min(sidebarWidth, max(150, (window?.frame.width ?? 640) - 240)) : 0
+        sidebarWidthConstraint?.constant = width
+        sidebar.isHidden = !visible || sidebarCollapsed
+        divider.isHidden = !visible || sidebarCollapsed
+        tabBar.configureSidebar(visible: visible, collapsed: sidebarCollapsed, width: width, mediaMode: mediaMode)
+    }
+
+    func restoreWorkspace(root: URL, collapsed: Bool, width: CGFloat, media: Bool) {
+        textView.dismissReferences()
+        textView.referencesEnabled = true
+        workspace = Workspace(root: root)
+        sidebar.setRoot(root)
+        sidebarCollapsed = collapsed; sidebarWidth = max(150, min(width, 600)); mediaMode = media
+        sidebar.mediaMode = media
+        updateSidebar()
+        refreshChrome()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        sidebar.refresh()
+    }
+
+    @objc func closeFolder(_ sender: Any?) {
+        textView.dismissReferences()
+        textView.referencesEnabled = false
+        workspace = nil
+        mediaMode = false
+        updateSidebar()
+        refreshChrome()
+    }
+
+    @objc func openFolder(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.prompt = "Open Folder"
+        if panel.runModal() == .OK, let url = panel.url { open(url: url) }
+    }
+
+    private func openFolderTab(_ url: URL) {
+        if let index = documents.firstIndex(where: { $0.url?.standardizedFileURL.path == url.standardizedFileURL.path && $0.kind == .folder }) { switchTab(to: index); return }
+        documents.append(Document(url: url))
+        switchTab(to: documents.count - 1)
+    }
+
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "md")!, .init(filenameExtension: "markdown")!, .plainText]
-        panel.allowsOtherFileTypes = true
-        if panel.runModal() == .OK, let url = panel.url {
-            open(url: url)
-        }
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK { for url in panel.urls { open(url: url) } }
     }
 
     @discardableResult
-    func open(url: URL) -> Bool {
+    func open(url: URL, forceNewTab: Bool = false) -> Bool {
+        let url = url.standardizedFileURL
+        guard FileManager.default.fileExists(atPath: url.path), FileManager.default.isReadableFile(atPath: url.path) else {
+            let alert = NSAlert(); alert.messageText = "Could not open \(url.lastPathComponent)"
+            alert.informativeText = "The file may have moved or is no longer accessible.\n\(url.path)"
+            alert.runModal(); return false
+        }
+        let kind = FileKind.classify(url)
+        if kind == .folder {
+            restoreWorkspace(root: url, collapsed: false, width: sidebarWidth, media: false)
+            documents.append(Document(url: url))
+            app?.addRecentFile(url)
+            switchTab(to: documents.count - 1)
+            return true
+        }
+        if forceNewTab {
+            if focus(url: url) { return true }
+        } else if let app, app.focusExisting(url: url) { return true }
+        if kind != .markdown {
+            documents.append(Document(url: url))
+            app?.addRecentFile(url)
+            switchTab(to: documents.count - 1)
+            return true
+        }
         // If any window already has it, focus that tab instead.
-        if let app, app.focusExisting(url: url) { return true }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else {
             NSSound.beep()
             return false
@@ -498,7 +647,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             doc = Document(url: url, content: content)
         }
         // Reuse the current tab when it's an empty, untouched untitled buffer.
-        if currentDocument.url == nil, !currentDocument.edited, currentDocument.storage.length == 0 {
+        if !forceNewTab, currentDocument.url == nil, !currentDocument.edited, currentDocument.storage.length == 0 {
             documents[current] = doc
             switchTab(to: current)
         } else {
@@ -506,6 +655,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             switchTab(to: documents.count - 1)
         }
         return true
+    }
+
+    func restoreTab(url: URL) {
+        if FileKind.classify(url) == .folder {
+            let doc = Document(url: url)
+            if documents.count == 1, currentDocument.url == nil, currentDocument.storage.length == 0, !currentDocument.edited {
+                documents[0] = doc; switchTab(to: 0)
+            } else { documents.append(doc); switchTab(to: documents.count - 1) }
+        } else { open(url: url) }
     }
 
     /// Reopens a draft left behind by a crashed or quit session as a tab.
@@ -533,7 +691,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         autosaveTimer?.invalidate()
         autosaveTimer = nil
         var ok = true
-        for doc in documents where doc.edited {
+        for doc in documents where doc.edited && doc.kind == .markdown {
             if let url = doc.url,
                (try? doc.storage.string.write(to: url, atomically: true, encoding: .utf8)) != nil {
                 doc.edited = false
@@ -555,6 +713,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     @objc func saveDocument(_ sender: Any?) {
+        guard currentDocument.kind == .markdown else { return }
         if currentDocument.url == nil {
             promptForSaveURL()
         }
@@ -562,6 +721,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     @objc func saveDocumentAs(_ sender: Any?) {
+        guard currentDocument.kind == .markdown else { return }
         promptForSaveURL()
         if saveCurrentDocument() { flashSaved() }
     }
@@ -594,7 +754,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     @discardableResult
     private func saveCurrentDocument() -> Bool {
         let doc = currentDocument
-        guard let url = doc.url else { return false }
+        guard doc.kind == .markdown, let url = doc.url else { return false }
         do {
             try doc.storage.string.write(to: url, atomically: true, encoding: .utf8)
             doc.edited = false

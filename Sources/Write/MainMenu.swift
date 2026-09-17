@@ -26,6 +26,9 @@ extension AppDelegate {
         fileMenu.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
         fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab(_:)), keyEquivalent: "t")
         fileMenu.addItem(withTitle: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
+        let folder = fileMenu.addItem(withTitle: "Open Folder…", action: #selector(openFolder(_:)), keyEquivalent: "o")
+        folder.keyEquivalentModifierMask = [.command, .option]
+        fileMenu.addItem(withTitle: "Close Folder", action: #selector(EditorWindowController.closeFolder(_:)), keyEquivalent: "")
         let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         openRecentMenu = NSMenu(title: "Open Recent")
         openRecentMenu.delegate = self

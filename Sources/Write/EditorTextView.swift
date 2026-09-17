@@ -6,6 +6,73 @@ import AppKit
 final class EditorTextView: NSTextView {
 
     private let highlighter = MarkdownHighlighter()
+    var referencesEnabled = false
+    var referenceCandidates: ((String) -> [(URL, String)])?
+    var onInsertReference: ((URL, NSRange) -> Void)?
+    var onOpenReference: ((String) -> Void)?
+    private var referenceRange: NSRange?
+    private lazy var referencePicker: ReferencePicker = {
+        let picker = ReferencePicker()
+        picker.onChoose = { [weak self] url in
+            guard let self, let range = self.referenceRange else { return }
+            self.referenceRange = nil
+            self.onInsertReference?(url, range)
+        }
+        return picker
+    }()
+
+    func dismissReferences() { referenceRange = nil; referencePicker.dismiss() }
+
+    private func updateReferences() {
+        guard let range = referenceRange, selectedRange().length == 0 else { return }
+        let caret = selectedRange().location
+        let ns = string as NSString
+        guard caret > range.location, caret <= ns.length,
+              ns.substring(with: NSRange(location: range.location, length: 1)) == "@",
+              let window else { dismissReferences(); return }
+        let query = ns.substring(with: NSRange(location: range.location + 1, length: caret - range.location - 1))
+        guard !query.contains("\n"), query.count < 160 else { dismissReferences(); return }
+        referenceRange = NSRange(location: range.location, length: caret - range.location)
+        referencePicker.show(referenceCandidates?(query) ?? [], below: firstRect(forCharacterRange: NSRange(location: range.location, length: 1), actualRange: nil), parent: window)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if referencePicker.isVisible {
+            switch event.keyCode {
+            case 125: referencePicker.move(1); return
+            case 126: referencePicker.move(-1); return
+            case 36, 48: referencePicker.choose(); return
+            case 53: dismissReferences(); return
+            default: break
+            }
+        }
+        super.keyDown(with: event)
+        updateReferences()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dismissReferences()
+        if !event.modifierFlags.contains(.option), let layoutManager, let textContainer, let textStorage {
+            var point = convert(event.locationInWindow, from: nil)
+            point.x -= textContainerOrigin.x; point.y -= textContainerOrigin.y
+            var fraction: CGFloat = 0
+            let glyph = layoutManager.glyphIndex(for: point, in: textContainer, fractionOfDistanceThroughGlyph: &fraction)
+            if glyph < layoutManager.numberOfGlyphs {
+                let index = layoutManager.characterIndexForGlyph(at: glyph)
+                let rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
+                if rect.insetBy(dx: 3, dy: 2).contains(point), index < textStorage.length,
+                   let destination = textStorage.attribute(.fileReference, at: index, effectiveRange: nil) as? String {
+                    onOpenReference?(destination); return
+                }
+            }
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        dismissReferences()
+        return super.resignFirstResponder()
+    }
 
     /// Extra space above the text for the inline document title. The inset
     /// carries half of it, and the origin shift moves that half to the top,
@@ -371,6 +438,14 @@ final class EditorTextView: NSTextView {
             }
         }
         super.insertText(string, replacementRange: replacementRange)
+        if inserted == "@", referencesEnabled, referenceCandidates != nil, !hasMarkedText() {
+            let caret = selectedRange().location
+            let ns = self.string as NSString
+            if caret > 0 && (caret == 1 || CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(ns.character(at: caret - 2)) ?? " ")) {
+                referenceRange = NSRange(location: caret - 1, length: 1)
+                updateReferences()
+            }
+        }
         guard inserted == "/" else { return }
         let ns = self.string as NSString
         let caret = selectedRange().location

@@ -3,6 +3,7 @@ import AppKit
 /// One open buffer: a tab owns its text storage, undo stack, and selection.
 final class Document {
     var url: URL?
+    let kind: FileKind
     let storage: NSTextStorage
     let undoManager = UndoManager()
     var selection = NSRange(location: 0, length: 0)
@@ -14,6 +15,7 @@ final class Document {
 
     init(url: URL? = nil, content: String = "") {
         self.url = url
+        kind = url.map(FileKind.classify) ?? .markdown
         storage = NSTextStorage(string: content, attributes: Theme.baseAttributes)
     }
 
