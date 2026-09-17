@@ -23,7 +23,7 @@ final class TabBarView: NSView {
     private let media = SidebarIconButton()
     private var controlsWidth: NSLayoutConstraint!
     private let stack = NSStackView()
-    private let tabScroll = NSScrollView()
+    private let tabScroll = TabScrollView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -33,10 +33,14 @@ final class TabBarView: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = true
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: Self.cornerPadding)
         tabScroll.drawsBackground = false
-        tabScroll.hasHorizontalScroller = true
-        tabScroll.autohidesScrollers = true
-        tabScroll.scrollerStyle = .overlay
+        // Scrolling is handled directly so no system preference or gesture
+        // can make an overlay indicator appear over the tabs.
+        tabScroll.hasHorizontalScroller = false
+        tabScroll.hasVerticalScroller = false
         tabScroll.documentView = stack
+        tabScroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshHover),
+                                               name: NSView.boundsDidChangeNotification, object: tabScroll.contentView)
         tabScroll.translatesAutoresizingMaskIntoConstraints = false
         controls.translatesAutoresizingMaskIntoConstraints = false
         addSubview(controls)
@@ -77,6 +81,29 @@ final class TabBarView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func refreshHover() {
+        guard let window else { return }
+        updateHover(at: window.mouseLocationOutsideOfEventStream)
+    }
+
+    /// Resolve against current geometry, including the clip view, instead of
+    /// trusting enter/exit events for tracking areas moving under the mouse.
+    func updateHover(at windowPoint: NSPoint) {
+        let inside = !isHiddenOrHasHiddenAncestor && tabScroll.bounds.contains(tabScroll.convert(windowPoint, from: nil))
+        for view in stack.arrangedSubviews {
+            let hovered = inside && view.bounds.contains(view.convert(windowPoint, from: nil))
+            (view as? TabItemView)?.setHovered(hovered)
+            (view as? NewTabButton)?.setHovered(hovered)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        refreshHover()
+    }
+
     func configureSidebar(visible: Bool, collapsed: Bool, width: CGFloat, mediaMode: Bool) {
         controlsWidth.constant = visible ? (collapsed ? 45 : width) : 0
         controls.isHidden = !visible
@@ -102,12 +129,14 @@ final class TabBarView: NSView {
                 title: tab.edited ? "\(tab.name) •" : tab.name,
                 active: index == selected
             )
+            item.onHoverChange = { [weak self] in self?.refreshHover() }
             item.onClick = { [weak self] in self?.onSelect?(index) }
             item.onClose = { [weak self] in self?.onClose?(index) }
             item.onDetach = { [weak self] screenPoint in self?.onDetach?(index, screenPoint) }
             stack.addArrangedSubview(item)
         }
         let plus = NewTabButton()
+        plus.onHoverChange = { [weak self] in self?.refreshHover() }
         plus.onClick = { [weak self] in self?.onNewTab?() }
         stack.addArrangedSubview(plus)
         stack.setFrameSize(NSSize(width: stack.fittingSize.width, height: 31))
@@ -116,12 +145,27 @@ final class TabBarView: NSView {
             let selectedTab = stack.arrangedSubviews[selected]
             selectedTab.scrollToVisible(selectedTab.bounds)
         }
+        refreshHover()
+    }
+}
+
+/// An indicator-free strip that still accepts trackpad and mouse-wheel input.
+private final class TabScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        let delta = event.scrollingDeltaX != 0 ? event.scrollingDeltaX : event.scrollingDeltaY
+        let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 16
+        var proposed = contentView.bounds
+        proposed.origin.x -= delta * scale
+        let constrained = contentView.constrainBoundsRect(proposed)
+        contentView.scroll(to: constrained.origin)
+        reflectScrolledClipView(contentView)
     }
 }
 
 /// The [+] at the end of the tab strip.
 private final class NewTabButton: NSView {
 
+    var onHoverChange: (() -> Void)?
     var onClick: (() -> Void)?
     private var hovered = false { didSet { needsDisplay = true } }
 
@@ -154,14 +198,13 @@ private final class NewTabButton: NSView {
             owner: self))
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        hovered = true
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
-    }
+    override func mouseEntered(with event: NSEvent) { onHoverChange?() }
+    override func mouseExited(with event: NSEvent) { onHoverChange?() }
 
-    override func mouseExited(with event: NSEvent) {
-        hovered = false
-        layer?.backgroundColor = NSColor.clear.cgColor
+    func setHovered(_ value: Bool) {
+        guard hovered != value else { return }
+        hovered = value
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(value ? 0.06 : 0).cgColor
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -195,6 +238,8 @@ private func drawGlyphCentered(_ string: String, size: CGFloat, color: NSColor, 
 
 private final class TabItemView: NSView {
 
+    var onHoverChange: (() -> Void)?
+    private var hovered = false
     var onClick: (() -> Void)?
     var onClose: (() -> Void)?
     var onDetach: ((NSPoint) -> Void)?
@@ -273,23 +318,28 @@ private final class TabItemView: NSView {
             owner: self))
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        // Freeze the tab's width, then let the × overlay the trailing end
-        // while the label truncates into the remaining space.
-        let freeze = widthAnchor.constraint(equalToConstant: bounds.width)
-        freeze.isActive = true
-        frozenWidth = freeze
-        labelTrailingNormal.isActive = false
-        labelTrailingHover.isActive = true
-        closeButton.isHidden = false
-    }
+    override func mouseEntered(with event: NSEvent) { onHoverChange?() }
+    override func mouseExited(with event: NSEvent) { onHoverChange?() }
 
-    override func mouseExited(with event: NSEvent) {
-        closeButton.isHidden = true
-        labelTrailingHover.isActive = false
-        labelTrailingNormal.isActive = true
-        frozenWidth?.isActive = false
-        frozenWidth = nil
+    func setHovered(_ value: Bool) {
+        guard hovered != value else { return }
+        hovered = value
+        if value {
+            // Only one frozen-width constraint may exist, even if AppKit
+            // delivers repeated enter events while the strip is scrolling.
+            let freeze = widthAnchor.constraint(equalToConstant: bounds.width)
+            freeze.isActive = true
+            frozenWidth = freeze
+            labelTrailingNormal.isActive = false
+            labelTrailingHover.isActive = true
+            closeButton.isHidden = false
+        } else {
+            closeButton.isHidden = true
+            labelTrailingHover.isActive = false
+            labelTrailingNormal.isActive = true
+            frozenWidth?.isActive = false
+            frozenWidth = nil
+        }
     }
 
     // MARK: - Click / drag-to-detach

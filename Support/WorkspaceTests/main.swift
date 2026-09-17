@@ -119,6 +119,41 @@ controller.switchTab(to: controller.current)
 check("tabs overflow in a scrollable document", strip.documentView!.frame.width > strip.contentView.bounds.width)
 let lastTab = descendants(strip).filter { String(describing: type(of: $0)) == "TabItemView" }.last!
 check("selected last tab remains fully visible", strip.documentVisibleRect.contains(lastTab.frame))
+// Wheel scrolling must remain available without an AppKit scroller to flash.
+check("tab strip never creates scroll indicators", !strip.hasHorizontalScroller && !strip.hasVerticalScroller && strip.horizontalScroller == nil && strip.verticalScroller == nil)
+strip.contentView.scroll(to: .zero)
+let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0, wheel2: -80, wheel3: 0)!
+strip.scrollWheel(with: NSEvent(cgEvent: wheel)!)
+check("horizontal wheel input scrolls tabs without indicators", strip.contentView.bounds.minX > 0)
+strip.contentView.scroll(to: .zero)
+let verticalWheel = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: -3, wheel2: 0, wheel3: 0)!
+strip.scrollWheel(with: NSEvent(cgEvent: verticalWheel)!)
+check("ordinary mouse wheel can scroll tab strip", strip.contentView.bounds.minX > 0)
+
+let tabBar = bar as! TabBarView
+let tabItems = descendants(strip).filter { String(describing: type(of: $0)) == "TabItemView" }
+let pointer = strip.convert(NSPoint(x: 40, y: strip.bounds.midY), to: nil)
+let outside = NSPoint(x: -1000, y: -1000)
+var hoverTracksScroll = true
+let maxOffset = max(0, strip.documentView!.frame.width - strip.contentView.bounds.width)
+for offset in stride(from: CGFloat(0), through: maxOffset, by: 12) {
+    strip.contentView.scroll(to: NSPoint(x: offset, y: 0))
+    // Repeated geometry updates model a stationary pointer during scrolling.
+    for _ in 0..<3 { tabBar.updateHover(at: pointer) }
+    for item in tabItems {
+        let expected = item.bounds.contains(item.convert(pointer, from: nil))
+        let close = item.subviews.first { $0 is HoverCloseButton }!
+        let frozenWidths = item.constraints.filter { $0.isActive && $0.firstAttribute == .width && $0.relation == .equal }
+        hoverTracksScroll = hoverTracksScroll && (close.isHidden == !expected) && frozenWidths.count == (expected ? 1 : 0)
+    }
+}
+check("scrolling beneath pointer leaves only current tab hovered", hoverTracksScroll)
+tabBar.updateHover(at: outside)
+check("leaving strip clears every close button and frozen width", tabItems.allSatisfy { item in
+    item.subviews.filter { $0 is HoverCloseButton }.allSatisfy(\.isHidden) &&
+    !item.constraints.contains { $0.isActive && $0.firstAttribute == .width && $0.relation == .equal }
+})
+lastTab.scrollToVisible(lastTab.bounds)
 snapshot("tabs-overflow")
 controller.window?.setContentSize(NSSize(width: 960, height: 720))
 controller.window?.contentView?.layoutSubtreeIfNeeded()
