@@ -259,6 +259,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     func windowWillClose(_ notification: Notification) {
+        preview.suspend()
         textView.dismissReferences()
         autosaveTimer?.invalidate()
         savedFlashTimer?.invalidate()

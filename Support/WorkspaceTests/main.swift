@@ -220,6 +220,37 @@ restored.restoreWorkspace(root: root.appendingPathComponent("Media"), collapsed:
 check("restored folder tabs don't replace root", restored.workspace?.root == root.appendingPathComponent("Media") && restored.documents.count == 2)
 check("sidebar preferences restore", restored.sidebarCollapsed && restored.sidebarWidth == 270 && restored.mediaMode)
 check("persist preview tabs safely", restored.persistAllDrafts())
+// A large folder should create work for the viewport, not for every image.
+let manyImages = fixture.appendingPathComponent("Many images")
+try FileManager.default.createDirectory(at: manyImages, withIntermediateDirectories: true)
+for index in 0..<500 {
+    try FileManager.default.copyItem(at: imageURL, to: manyImages.appendingPathComponent("Image \(index).png"))
+}
+let beforeDecodes = ImageLoader.shared.statistics.thumbnailDecodes
+let beforeGallery = Date()
+controller.open(url: manyImages)
+let galleryDeadline = Date().addingTimeInterval(10)
+while preview.sections.first?.images.count != 500 && Date() < galleryDeadline {
+    RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+}
+RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+let visible = groupedCollection.visibleItems()
+let newDecodes = ImageLoader.shared.statistics.thumbnailDecodes - beforeDecodes
+check("large gallery indexes all images", preview.sections.first?.images.count == 500)
+check("large gallery only decodes visible cells", !visible.isEmpty && visible.count < 40 && newDecodes <= visible.count + 4)
+check("large gallery pending work is bounded by viewport", ImageLoader.shared.pendingThumbnailCount <= visible.count)
+print(String(format: "GALLERY: 500 files, %d visible cells, %d thumbnail decodes, %.3fs including 0.3s settle", visible.count, newDecodes, Date().timeIntervalSince(beforeGallery)))
+groupedCollection.scrollToItems(at: Set([IndexPath(item: 499, section: 0)]), scrollPosition: .bottom)
+RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+let nowVisible = groupedCollection.visibleItems()
+check("offscreen gallery cells release decoded pixels", visible.filter { old in !nowVisible.contains { $0 === old } }.allSatisfy { $0.imageView?.image == nil })
+controller.open(url: imageURL, forceNewTab: true)
+RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+let originalImageView = preview.subviews.first { $0 is NSImageView } as! NSImageView
+check("full viewer loads original separately", originalImageView.image != nil)
+controller.switchTab(to: 0)
+check("leaving viewer releases original pixels", originalImageView.image == nil && preview.sections.isEmpty)
+check("leaving gallery cancels pending thumbnails", ImageLoader.shared.pendingThumbnailCount == 0)
 controller.window?.orderOut(nil); restored.window?.orderOut(nil)
 print(failures == 0 ? "ALL WORKSPACE TESTS PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

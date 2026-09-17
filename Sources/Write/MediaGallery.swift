@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 struct MediaSection {
     let directory: URL
@@ -10,15 +11,21 @@ enum MediaGallery {
     /// an ancestor. Never traverse symlinks back into this tree or outside it.
     static func sections(in root: URL, cancelled: () -> Bool = { false }) throws -> [MediaSection] {
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
-        _ = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: keys)
+        guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true,
+              FileManager.default.isReadableFile(atPath: root.path) else { throw CocoaError(.fileReadNoPermission) }
         let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
                                                        options: [.skipsHiddenFiles, .skipsPackageDescendants])
         var grouped: [String: (URL, [URL])] = [:]
+        var imageExtensions: [String: Bool] = [:]
         while let url = enumerator?.nextObject() as? URL {
             if cancelled() { return [] }
             let values = try? url.resourceValues(forKeys: Set(keys))
             if values?.isSymbolicLink == true { enumerator?.skipDescendants(); continue }
-            guard values?.isDirectory != true, FileKind.classify(url) == .image else { continue }
+            guard values?.isDirectory != true else { continue }
+            let ext = url.pathExtension.lowercased()
+            let isImage = imageExtensions[ext] ?? (UTType(filenameExtension: ext)?.conforms(to: .image) == true)
+            imageExtensions[ext] = isImage
+            guard isImage else { continue }
             let directory = url.deletingLastPathComponent().standardizedFileURL
             if grouped[directory.path] == nil { grouped[directory.path] = (directory, []) }
             grouped[directory.path]?.1.append(url)

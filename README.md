@@ -59,6 +59,13 @@ the session. **File → Close Folder** removes the sidebar and keeps your tabs.
   headings. Click an image to animate into its own preview tab; click a folder in
   its breadcrumb to return to that gallery. Galleries remember their scroll position.
   In Files mode, image previews have no title or breadcrumb.
+- Galleries decode only visible thumbnails, sized for the display's pixel density.
+  Offscreen requests are cancelled and reusable cells release their images. A 64 MB
+  decoded thumbnail cache and a 256 MB disk cache under `~/Library/Caches/com.grant.write/`
+  avoid repeated decoding; editing a source invalidates its cached thumbnail.
+  Opened images use a separate queue and the original native resolution, with no
+  lossy re-encoding or preview-size cap. Original pixels are released on leaving
+  the viewer and never stored in the thumbnail caches.
 - Sidebar controls align with the tabs; the collapse control points in the direction
   it will move. Overflowing tabs scroll horizontally through the window's right edge.
 - The tree refreshes when the window regains focus. Right-click it and choose

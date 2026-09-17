@@ -16,6 +16,8 @@ test:
 	@.build/tests/behavior
 	@swiftc -o .build/tests/workspace $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/WorkspaceTests/main.swift
 	@.build/tests/workspace
+	@swiftc -o .build/tests/images Sources/Write/ImageLoader.swift Support/ImageTests/main.swift
+	@.build/tests/images
 
 build:
 	swift build -c release

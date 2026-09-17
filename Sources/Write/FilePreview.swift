@@ -1,35 +1,11 @@
 import AppKit
 import ImageIO
 
-/// Decode bounded thumbnails off the main thread, including for full-window previews.
-final class ImageLoader {
-    static let shared = ImageLoader()
-    private let cache = NSCache<NSString, NSImage>()
-    private let queue: OperationQueue = {
-        let q = OperationQueue(); q.maxConcurrentOperationCount = 3; q.qualityOfService = .userInitiated; return q
-    }()
-    func load(_ url: URL, pixels: Int, completion: @escaping (NSImage?) -> Void) {
-        let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
-        let key = "\(url.path)#\(modified)#\(pixels)" as NSString
-        if let image = cache.object(forKey: key) { completion(image); return }
-        queue.addOperation { [weak self] in
-            let source = CGImageSourceCreateWithURL(url as CFURL, nil)
-            let cg = source.flatMap { CGImageSourceCreateThumbnailAtIndex($0, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: pixels,
-            ] as CFDictionary) }
-            let image = cg.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
-                ?? NSImage(contentsOf: url)
-            if let image { self?.cache.setObject(image, forKey: key, cost: pixels * pixels * 4) }
-            DispatchQueue.main.async { completion(image) }
-        }
-    }
-    private init() { cache.totalCostLimit = 128 * 1024 * 1024 }
-}
-
 private final class MediaItem: NSCollectionViewItem {
-    var representedURL: URL?
+    private var representedURL: URL?
+    private var request: ImageRequest?
+    private var generation = UUID()
+    private var loadedPixels = 0
     override func loadView() {
         view = NSView()
         let image = NSImageView()
@@ -50,15 +26,35 @@ private final class MediaItem: NSCollectionViewItem {
         imageView = image; textField = label
     }
     func configure(_ url: URL) {
+        stopLoading()
         representedURL = url
         textField?.stringValue = url.lastPathComponent
-        imageView?.image = NSImage(systemSymbolName: "photo", accessibilityDescription: "Loading image")
         view.toolTip = url.lastPathComponent
-        ImageLoader.shared.load(url, pixels: 480) { [weak self] image in
-            guard self?.representedURL == url else { return }
-            self?.imageView?.image = image ?? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Unable to load image")
+    }
+    func loadThumbnail(scale: CGFloat) {
+        guard let url = representedURL else { return }
+        let pixels = ImageLoader.thumbnailPixels(points: 160, scale: scale)
+        guard request == nil || loadedPixels != pixels else { return }
+        request?.cancel()
+        generation = UUID(); let token = generation
+        loadedPixels = pixels
+        imageView?.image = NSImage(systemSymbolName: "photo", accessibilityDescription: "Loading image")
+        request = ImageLoader.shared.thumbnail(url, pixels: pixels) { [weak self] image in
+            guard let self, self.generation == token else { return }
+            self.imageView?.image = image ?? NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Unable to load image")
         }
     }
+    func stopLoading() {
+        request?.cancel(); request = nil
+        generation = UUID(); loadedPixels = 0
+        imageView?.image = nil
+    }
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        stopLoading()
+        representedURL = nil
+    }
+
 }
 
 final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDelegate {
@@ -75,6 +71,7 @@ final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDel
     private var galleryPositions: [String: NSPoint] = [:]
     private var loadID = UUID()
     private var scan: BlockOperation?
+    private var originalRequest: ImageRequest?
     private let scanQueue: OperationQueue = {
         let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1; queue.qualityOfService = .userInitiated; return queue
     }()
@@ -119,6 +116,15 @@ final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDel
         if let galleryURL { galleryPositions[galleryURL.path] = scroll.contentView.bounds.origin }
         galleryURL = nil
         scan?.cancel()
+        originalRequest?.cancel(); originalRequest = nil
+        imageView.image = nil
+        for item in collection.visibleItems() { (item as? MediaItem)?.stopLoading() }
+        // Discard cells and their images when leaving a gallery; retain only
+        // its scroll position, not decoded pixels hidden behind another tab.
+        if !sections.isEmpty {
+            sections = []
+            collection.reloadData()
+        }
         loadID = UUID()
     }
     func show(_ doc: Document, root: URL? = nil, mediaMode: Bool = false, from origin: NSRect? = nil) {
@@ -165,7 +171,7 @@ final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDel
             scan = operation; scanQueue.addOperation(operation)
         } else if doc.kind == .image {
             message.stringValue = "Loading image…"; message.isHidden = false
-            ImageLoader.shared.load(url, pixels: 2800) { [weak self] image in
+            originalRequest = ImageLoader.shared.original(url) { [weak self] image in
                 guard let self, self.loadID == token else { return }
                 self.imageView.image = image
                 self.message.stringValue = "This image could not be loaded"
@@ -189,6 +195,20 @@ final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDel
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("media"), for: indexPath) as! MediaItem
         item.configure(sections[indexPath.section].images[indexPath.item]); return item
+    }
+    func collectionView(_ collectionView: NSCollectionView, willDisplay item: NSCollectionViewItem, forRepresentedObjectAt indexPath: IndexPath) {
+        guard !isHidden, galleryURL != nil else { return }
+        (item as? MediaItem)?.loadThumbnail(scale: window?.backingScaleFactor ?? 2)
+    }
+    func collectionView(_ collectionView: NSCollectionView, didEndDisplaying item: NSCollectionViewItem, forRepresentedObjectAt indexPath: IndexPath) {
+        (item as? MediaItem)?.stopLoading()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard galleryURL != nil, !isHidden else { return }
+        for item in collection.visibleItems() {
+            (item as? MediaItem)?.loadThumbnail(scale: window?.backingScaleFactor ?? 2)
+        }
     }
     func collectionView(_ collectionView: NSCollectionView, viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind, at indexPath: IndexPath) -> NSView {
         let header = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: NSUserInterfaceItemIdentifier("path"), for: indexPath) as! GalleryHeader
