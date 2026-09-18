@@ -271,6 +271,31 @@ check("full viewer loads original separately", originalImageView.image != nil)
 controller.switchTab(to: 0)
 check("leaving viewer releases original pixels", originalImageView.image == nil && preview.sections.isEmpty)
 check("leaving gallery cancels pending thumbnails", ImageLoader.shared.pendingThumbnailCount == 0)
+// Sidebar clicks navigate in place: focus a tab that already shows the file,
+// otherwise replace the current tab's content (flushing its edits first);
+// only untitled buffers holding text keep their tab.
+let freshA = root.appendingPathComponent("Notes/FreshA.md")
+let freshB = root.appendingPathComponent("Notes/FreshB.md")
+try "# A\n".write(to: freshA, atomically: true, encoding: .utf8)
+try "# B\n".write(to: freshB, atomically: true, encoding: .utf8)
+let tabsBefore = controller.documents.count
+controller.openInCurrentTab(imageURL)
+check("sidebar open focuses an existing tab", controller.documents.count == tabsBefore && controller.currentDocument.url == imageURL.standardizedFileURL)
+controller.switchTab(to: controller.documents.firstIndex { $0.url == source }!)
+controller.textView.insertText("draft in progress ", replacementRange: NSRange(location: 0, length: 0))
+controller.openInCurrentTab(freshA)
+let flushedSource = (try? String(contentsOf: source, encoding: .utf8)) ?? ""
+check("sidebar open replaces the current tab and flushes its edits",
+      controller.documents.count == tabsBefore && controller.currentDocument.url == freshA
+      && !controller.documents.contains { $0.url == source } && flushedSource.hasPrefix("draft in progress"))
+controller.newTab(nil)
+controller.textView.insertText("scratch", replacementRange: NSRange(location: 0, length: 0))
+let untitledTabs = controller.documents.count
+controller.openInCurrentTab(freshB)
+check("sidebar open keeps untitled buffers in their tab",
+      controller.documents.count == untitledTabs + 1 && controller.currentDocument.url == freshB
+      && controller.documents.contains { $0.url == nil && $0.storage.string == "scratch" })
+
 controller.window?.orderOut(nil); restored.window?.orderOut(nil)
 print(failures == 0 ? "ALL WORKSPACE TESTS PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

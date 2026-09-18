@@ -140,7 +140,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         // froze until the fingers lifted.
         statusPill = NSView()
         statusPill.wantsLayer = true
-        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.85).cgColor
+        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(Theme.backgroundOpacity).cgColor
         statusPill.layer?.cornerRadius = 7
         statusPill.layer?.cornerCurve = .continuous
         statusPill.layer?.masksToBounds = true
@@ -171,9 +171,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             self.workspace?.refreshIndex()
             if self.currentDocument.kind == .folder { self.refreshChrome() }
         }
-        sidebar.onOpen = { [weak self] url, folder in
-            if folder { self?.openFolderTab(url) } else { self?.open(url: url, forceNewTab: true) }
-        }
+        sidebar.onOpen = { [weak self] url, _ in self?.openInCurrentTab(url) }
         divider.onResize = { [weak self] width in
             guard let self else { return }
             self.sidebarCollapsed = width < 90
@@ -636,21 +634,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             return false
         }
         app?.addRecentFile(url)
-        let doc: Document
-        // A surviving draft means edits never reached the file (crash before
-        // the debounce fired, or a failed write): prefer the draft.
-        if let draft = RecoveryStore.draft(forPath: url.path) {
-            if draft.content != content {
-                doc = Document(url: url, content: draft.content)
-                doc.recoveryID = draft.id
-                doc.edited = true
-            } else {
-                RecoveryStore.remove(id: draft.id)
-                doc = Document(url: url, content: content)
-            }
-        } else {
-            doc = Document(url: url, content: content)
-        }
+        let doc = markdownDocument(url: url, content: content)
         // Reuse the current tab when it's an empty, untouched untitled buffer.
         if !forceNewTab, currentDocument.url == nil, !currentDocument.edited, currentDocument.storage.length == 0 {
             documents[current] = doc
@@ -660,6 +644,51 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             switchTab(to: documents.count - 1)
         }
         return true
+    }
+
+    /// A surviving draft means edits never reached the file (crash before
+    /// the debounce fired, or a failed write): prefer the draft.
+    private func markdownDocument(url: URL, content: String) -> Document {
+        if let draft = RecoveryStore.draft(forPath: url.path) {
+            if draft.content != content {
+                let doc = Document(url: url, content: draft.content)
+                doc.recoveryID = draft.id
+                doc.edited = true
+                return doc
+            }
+            RecoveryStore.remove(id: draft.id)
+        }
+        return Document(url: url, content: content)
+    }
+
+    /// Sidebar navigation: show `url` in the current tab rather than spawning
+    /// one. A tab already holding the file is focused. Edits flush to their
+    /// file before the tab's document is replaced (the same autosave path a
+    /// tab switch takes); only untitled buffers holding text keep their tab,
+    /// since they have no file to flush to.
+    func openInCurrentTab(_ url: URL) {
+        let url = url.standardizedFileURL
+        guard FileManager.default.fileExists(atPath: url.path), FileManager.default.isReadableFile(atPath: url.path) else {
+            NSSound.beep(); return
+        }
+        if let index = documents.firstIndex(where: { $0.url?.standardizedFileURL.path == url.path }) {
+            switchTab(to: index); return
+        }
+        guard currentDocument.url != nil || (!currentDocument.edited && currentDocument.storage.length == 0) else {
+            open(url: url, forceNewTab: true); return
+        }
+        let doc: Document
+        if FileKind.classify(url) == .markdown {
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else { NSSound.beep(); return }
+            doc = markdownDocument(url: url, content: content)
+        } else {
+            doc = Document(url: url)
+        }
+        commitTitleIfEditing()
+        flushAutosave()
+        app?.addRecentFile(url)
+        documents[current] = doc
+        switchTab(to: current)
     }
 
     func restoreTab(url: URL) {
