@@ -132,6 +132,16 @@ let bar = controller.window!.contentView!.subviews.first { $0 is TabBarView }!
 let strip = bar.subviews.first { $0 is NSScrollView } as! NSScrollView
 let sidebarPane = controller.window!.contentView!.subviews.first { $0 is FolderSidebar }!
 let control = descendants(sidebarPane).compactMap { $0 as? NSButton }.first { $0.toolTip == "Collapse sidebar" }!
+func headerButtonReceivesClicks(_ button: NSButton) -> Bool {
+    let frameView = controller.window!.contentView!.superview!
+    let center = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: frameView)
+    let hit = frameView.hitTest(center)
+    return hit === button || hit?.isDescendant(of: button) == true
+}
+for label in ["Collapse sidebar", "Files", "Media"] {
+    let button = descendants(sidebarPane).compactMap { $0 as? NSButton }.first { $0.toolTip == label }!
+    check("\(label) receives window hit tests", headerButtonReceivesClicks(button))
+}
 let tab = descendants(strip).first { String(describing: type(of: $0)) == "TabItemView" }!
 check("sidebar controls align to tab centers", abs(control.convert(control.bounds, to: bar).midY - tab.convert(tab.bounds, to: bar).midY) < 0.5)
 check("tab viewport reaches window edge", abs(strip.frame.maxX - bar.bounds.width) < 0.5)
@@ -397,10 +407,17 @@ if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
 settleSheet()
 check("animated collapse hides sidebar and releases editor width", creationSidebar.isHidden && abs(controller.textView.enclosingScrollView!.frame.minX) < 0.5)
 let expandControl = descendants(bar).compactMap { $0 as? NSButton }.first { $0.toolTip == "Expand sidebar" }!
+check("collapsed sidebar toggle receives window hit tests", headerButtonReceivesClicks(expandControl))
 expandControl.performClick(nil)
 check("expansion places sidebar at its final width immediately", abs(creationSidebar.frame.width - expandedWidth) < 0.5)
 settleSheet()
 check("animated expansion restores sidebar width", !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
+for label in ["Files", "Media"] {
+    let button = descendants(creationSidebar).compactMap { $0 as? NSButton }.first { $0.toolTip == label }!
+    check("\(label) receives clicks after expanding", headerButtonReceivesClicks(button))
+    button.performClick(nil)
+    check("\(label) switches sidebar mode", controller.mediaMode == (label == "Media"))
+}
 control.performClick(nil)
 expandControl.performClick(nil)
 settleSheet()

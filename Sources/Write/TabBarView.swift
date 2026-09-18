@@ -66,6 +66,13 @@ final class TabBarView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        // This spacer overlaps the expanded sidebar's header. Let clicks
+        // reach its buttons below, while keeping our collapsed toggle active.
+        return hit === controls ? nil : hit
+    }
+
     deinit { NotificationCenter.default.removeObserver(self) }
 
     @objc private func refreshHover() {
