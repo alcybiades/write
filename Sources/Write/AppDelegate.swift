@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Capture before any window exists: refreshChrome() overwrites the
         // stored session as windows come up.
-        let savedWindows = UserDefaults.standard.array(forKey: "sessionWindows") as? [[String: Any]] ?? []
+        let savedWindows = AppState.defaults.array(forKey: "sessionWindows") as? [[String: Any]] ?? []
         buildMainMenu()
 
         let args = Array(CommandLine.arguments.dropFirst())
@@ -172,8 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Recent files
 
     private var recentFiles: [String] {
-        get { UserDefaults.standard.stringArray(forKey: "recentFiles") ?? [] }
-        set { UserDefaults.standard.set(Array(newValue.prefix(12)), forKey: "recentFiles") }
+        get { AppState.defaults.stringArray(forKey: "recentFiles") ?? [] }
+        set { AppState.defaults.set(Array(newValue.prefix(12)), forKey: "recentFiles") }
     }
 
     func addRecentFile(_ url: URL) {
@@ -231,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 "mediaMode": controller.mediaMode,
             ]
         }
-        UserDefaults.standard.set(entries, forKey: "sessionWindows")
+        AppState.defaults.set(entries, forKey: "sessionWindows")
     }
 
     private func restoreSession(_ savedWindows: [[String: Any]]) {
@@ -253,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // Legacy single-window session from earlier builds.
         if controllers.isEmpty {
-            let paths = (UserDefaults.standard.stringArray(forKey: "sessionFiles") ?? [])
+            let paths = (AppState.defaults.stringArray(forKey: "sessionFiles") ?? [])
                 .filter { FileManager.default.fileExists(atPath: $0) }
             guard !paths.isEmpty else { return }
             let controller = makeWindow()

@@ -17,6 +17,15 @@ needed for Tahoe's native window styling; the Makefile prefers the full Xcode
 installation when available. Set `DEVELOPER_DIR` to select a different Xcode.
 The bundle includes `Support/AppIcon.icns` automatically.
 
+Tests and the gallery benchmark use isolated preferences and recovery storage.
+For automated UI testing, launch a separate instance with
+`open -na /Applications/Write.app --args --test-mode` (or set `WRITE_TEST_MODE=1`
+when launching the executable). Every test launch gets a fresh profile: test
+drafts, tabs, recents, and preferences cannot enter your normal session, even
+if the test crashes. Use temporary copies of files for testing edits; explicitly
+opened files still save to their supplied paths. Normal launches retain your
+usual session and settings.
+
 ## Editing
 
 - Click anywhere to place the cursor, like Word or Pages.

@@ -12,7 +12,8 @@ BIN    := .build/release/$(APP)
 
 test:
 	@mkdir -p .build/tests
-	@xcrun swiftc -o .build/tests/behavior \
+	@xcrun swiftc -D WRITE_TESTING -o .build/tests/behavior \
+		Sources/Write/AppState.swift \
 		Sources/Write/Theme.swift \
 		Sources/Write/Workspace.swift \
 		Sources/Write/ReferencePicker.swift \
@@ -20,14 +21,14 @@ test:
 		Sources/Write/EditorTextView.swift \
 		Support/BehaviorTests/main.swift
 	@.build/tests/behavior
-	@xcrun swiftc -o .build/tests/workspace $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/WorkspaceTests/main.swift
+	@xcrun swiftc -D WRITE_TESTING -o .build/tests/workspace $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/WorkspaceTests/main.swift
 	@.build/tests/workspace
 	@xcrun swiftc -o .build/tests/images Sources/Write/ImageLoader.swift Support/ImageTests/main.swift
 	@.build/tests/images
 
 benchmark-gallery:
 	@mkdir -p .build/tests
-	@xcrun swiftc -O -whole-module-optimization -o .build/tests/gallery-benchmark $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/GalleryBenchmark/main.swift
+	@xcrun swiftc -D WRITE_TESTING -O -whole-module-optimization -o .build/tests/gallery-benchmark $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/GalleryBenchmark/main.swift
 	@.build/tests/gallery-benchmark "$(GALLERY)"
 
 build:

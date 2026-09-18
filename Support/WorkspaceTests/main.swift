@@ -1,5 +1,6 @@
 import AppKit
 
+precondition(AppState.isTesting, "Compile with -D WRITE_TESTING before running workspace tests")
 setbuf(stdout, nil)
 _ = NSApplication.shared
 var failures = 0
@@ -405,8 +406,26 @@ expandControl.performClick(nil)
 settleSheet()
 check("rapid sidebar toggles settle expanded", !controller.sidebarCollapsed && !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
 
-// These test-only drafts must not reappear in the user's next app session.
-for document in controller.documents + restored.documents { RecoveryStore.remove(document) }
+// Leave an unsaved buffer behind, as a crash would. It must stay in test state.
+let scratch = controller.documents.first { $0.url == nil && $0.storage.string == "scratch" }!
+check("test draft persists", RecoveryStore.write(scratch))
+check("test draft can be recovered in its own profile", RecoveryStore.loadAll().contains { $0.id == scratch.recoveryID })
+let realRecovery = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("Write/Recovery")
+check("test recovery directory is isolated", RecoveryStore.directory != realRecovery)
+check("test draft never reaches user recovery", !FileManager.default.fileExists(atPath:
+    realRecovery.appendingPathComponent(scratch.recoveryID.uuidString + ".json").path))
+let realRecents = UserDefaults.standard.stringArray(forKey: "recentFiles")
+let realSession = UserDefaults.standard.array(forKey: "sessionWindows") as NSArray?
+check("test profile starts without recents or session", AppState.defaults.object(forKey: "recentFiles") == nil
+      && AppState.defaults.object(forKey: "sessionWindows") == nil)
+let testApp = AppDelegate()
+testApp.addRecentFile(source)
+testApp.sessionChanged()
+check("test recents are recorded in test profile", AppState.defaults.stringArray(forKey: "recentFiles") == [source.path])
+check("test session is recorded in test profile", AppState.defaults.array(forKey: "sessionWindows") != nil)
+check("test recents leave user preferences intact", UserDefaults.standard.stringArray(forKey: "recentFiles") == realRecents)
+check("test session leaves user preferences intact", UserDefaults.standard.array(forKey: "sessionWindows") as NSArray? == realSession)
 controller.window?.orderOut(nil); restored.window?.orderOut(nil)
 print(failures == 0 ? "ALL WORKSPACE TESTS PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

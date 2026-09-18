@@ -1,5 +1,7 @@
 import AppKit
 
+precondition(AppState.isTesting, "Compile with -D WRITE_TESTING before running behavior tests")
+
 // Headless behavior tests for the editor's list/formatting logic.
 // Run with `make test`.
 

@@ -15,9 +15,7 @@ enum RecoveryStore {
     }
 
     static let directory: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        let dir = base.appendingPathComponent("Write/Recovery", isDirectory: true)
+        let dir = AppState.supportDirectory.appendingPathComponent("Recovery", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()

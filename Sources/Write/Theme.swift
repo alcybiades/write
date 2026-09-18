@@ -70,19 +70,19 @@ enum Theme {
 
     static var fontSize: CGFloat {
         get {
-            let stored = UserDefaults.standard.double(forKey: "fontSize")
+            let stored = AppState.defaults.double(forKey: "fontSize")
             return stored > 0 ? CGFloat(stored) : 20
         }
         set {
-            UserDefaults.standard.set(Double(newValue), forKey: "fontSize")
+            AppState.defaults.set(Double(newValue), forKey: "fontSize")
         }
     }
 
     static let defaultFontFamily = "Classic Console Neue"
 
     static var fontFamily: String {
-        get { UserDefaults.standard.string(forKey: "fontFamily") ?? defaultFontFamily }
-        set { UserDefaults.standard.set(newValue, forKey: "fontFamily") }
+        get { AppState.defaults.string(forKey: "fontFamily") ?? defaultFontFamily }
+        set { AppState.defaults.set(newValue, forKey: "fontFamily") }
     }
 
     private static let fallbackFontNames = ["ClassicConsoleNeue", "JetBrainsMono-Regular", "SFMono-Regular", "Menlo"]
