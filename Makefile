@@ -1,3 +1,9 @@
+# Link with the current SDK when full Xcode is installed, even if xcode-select
+# still points at older Command Line Tools. AppKit gates Tahoe styling on this.
+ifneq ($(wildcard /Applications/Xcode.app/Contents/Developer),)
+export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
+endif
+
 APP    := Write
 BUNDLE := dist/$(APP).app
 BIN    := .build/release/$(APP)
@@ -6,7 +12,7 @@ BIN    := .build/release/$(APP)
 
 test:
 	@mkdir -p .build/tests
-	@swiftc -o .build/tests/behavior \
+	@xcrun swiftc -o .build/tests/behavior \
 		Sources/Write/Theme.swift \
 		Sources/Write/Workspace.swift \
 		Sources/Write/ReferencePicker.swift \
@@ -14,18 +20,18 @@ test:
 		Sources/Write/EditorTextView.swift \
 		Support/BehaviorTests/main.swift
 	@.build/tests/behavior
-	@swiftc -o .build/tests/workspace $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/WorkspaceTests/main.swift
+	@xcrun swiftc -o .build/tests/workspace $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/WorkspaceTests/main.swift
 	@.build/tests/workspace
-	@swiftc -o .build/tests/images Sources/Write/ImageLoader.swift Support/ImageTests/main.swift
+	@xcrun swiftc -o .build/tests/images Sources/Write/ImageLoader.swift Support/ImageTests/main.swift
 	@.build/tests/images
 
 benchmark-gallery:
 	@mkdir -p .build/tests
-	@swiftc -O -whole-module-optimization -o .build/tests/gallery-benchmark $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/GalleryBenchmark/main.swift
+	@xcrun swiftc -O -whole-module-optimization -o .build/tests/gallery-benchmark $(filter-out Sources/Write/main.swift,$(wildcard Sources/Write/*.swift)) Support/GalleryBenchmark/main.swift
 	@.build/tests/gallery-benchmark "$(GALLERY)"
 
 build:
-	swift build -c release
+	xcrun swift build -c release
 
 app: build
 	rm -rf $(BUNDLE)

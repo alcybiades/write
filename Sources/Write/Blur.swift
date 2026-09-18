@@ -31,6 +31,16 @@ func applyTerminalBackdrop(to window: NSWindow) -> NSView {
     window.appearance = NSAppearance(named: .darkAqua)
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
+    if #available(macOS 26.0, *) {
+        // Tahoe chooses its larger (26 pt) native outline for unified-toolbar
+        // windows. Keep the toolbar empty: our tab row supplies the controls.
+        let toolbar = NSToolbar(identifier: "WriteWindowShape")
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window.toolbarStyle = .unified
+        window.toolbar = toolbar
+        window.titlebarSeparatorStyle = .none
+    }
     for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
         window.standardWindowButton(button)?.isHidden = true
     }

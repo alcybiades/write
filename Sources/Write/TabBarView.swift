@@ -28,6 +28,9 @@ final class TabBarView: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = true
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: Self.cornerPadding)
         tabScroll.drawsBackground = false
+        // This custom header owns its geometry; the native toolbar only
+        // selects the window outline and must not inset the tab viewport.
+        tabScroll.automaticallyAdjustsContentInsets = false
         // Scrolling is handled directly so no system preference or gesture
         // can make an overlay indicator appear over the tabs.
         tabScroll.hasHorizontalScroller = false

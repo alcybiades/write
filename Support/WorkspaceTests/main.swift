@@ -68,6 +68,9 @@ controller.showWindow(nil)
 check("single-file starts without sidebar", controller.workspace == nil)
 check("window uses the native frame with full-size content", controller.window!.styleMask.contains([.titled, .fullSizeContentView]))
 check("backdrop has no competing rounded clip", controller.window!.contentView!.layer?.cornerRadius == 0)
+if #available(macOS 26.0, *) {
+    check("Tahoe uses the larger unified-toolbar window outline", controller.window!.toolbarStyle == .unified && controller.window!.toolbar?.isVisible == true)
+}
 check("native titlebar buttons stay hidden", [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].allSatisfy { controller.window!.standardWindowButton($0)?.isHidden == true })
 check("open markdown", controller.open(url: source))
 let count = controller.documents.count

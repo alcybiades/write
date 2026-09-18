@@ -12,9 +12,10 @@ make install   # copy to /Applications
 make test      # editing, workspace, and image regressions
 ```
 
-Requires only Xcode Command Line Tools (`swift` + `make`). The bundle picks
-up `Support/AppIcon.icns` automatically, so a fresh clone builds with the
-app icon in place.
+Builds with Xcode Command Line Tools (`swift` + `make`). Xcode 26 or newer is
+needed for Tahoe's native window styling; the Makefile prefers the full Xcode
+installation when available. Set `DEVELOPER_DIR` to select a different Xcode.
+The bundle includes `Support/AppIcon.icns` automatically.
 
 ## Editing
 
