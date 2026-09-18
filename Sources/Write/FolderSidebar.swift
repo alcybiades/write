@@ -265,7 +265,7 @@ final class SidebarBackdrop: NSView {
 }
 
 enum SidebarTransition {
-    static let duration: TimeInterval = 0.20
+    static let duration: TimeInterval = 0.13
     static func fadeIn(_ views: [NSView]) {
         for view in views where !view.isHidden {
             view.wantsLayer = true
