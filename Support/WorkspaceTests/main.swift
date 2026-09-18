@@ -111,6 +111,12 @@ func galleryDescendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$
 galleryScroll.contentView.scroll(to: .zero)
 let headerWheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -80, wheel2: 0, wheel3: 0)!
 headerScroll.scrollWheel(with: NSEvent(cgEvent: headerWheel)!)
+// The gallery scrolls on the legacy (non-responsive) path, where wheel deltas
+// apply via NSScrollingAnimator on a later display-link tick, not synchronously.
+let wheelDeadline = Date().addingTimeInterval(1)
+while galleryScroll.contentView.bounds.minY <= 0, Date() < wheelDeadline {
+    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+}
 check("wheel over breadcrumbs scrolls parent gallery", galleryScroll.contentView.bounds.minY > 0)
 var galleryPosition = galleryScroll.contentView.bounds.origin
 func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }

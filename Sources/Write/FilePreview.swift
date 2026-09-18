@@ -96,11 +96,21 @@ private final class MediaItem: NSCollectionViewItem {
 
 }
 
+/// Keep the gallery off AppKit's concurrent (responsive) scrolling path: its
+/// per-event main-thread synchronizer re-runs a full window Auto Layout pass
+/// and canonical-origin fix-up for every gesture tick, which scales with the
+/// number of visible tiles and starves the main thread while fingers stay on
+/// the trackpad. The opt-out must live on the document view class —
+/// NSScrollView never consults its own override.
+private final class GalleryCollectionView: NSCollectionView {
+    override class var isCompatibleWithResponsiveScrolling: Bool { false }
+}
+
 final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDelegate {
     var onOpen: ((URL, NSRect) -> Void)?
     var onNavigate: ((URL) -> Void)?
     private let scroll = NSScrollView()
-    private let collection = NSCollectionView()
+    private let collection = GalleryCollectionView()
     private let imageView = NSImageView()
     private let message = NSTextField(labelWithString: "")
     private let breadcrumbs = BreadcrumbBar()

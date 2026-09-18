@@ -409,6 +409,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     private func refreshChrome() {
         let editable = currentDocument.kind == .markdown
+        // A translucent backdrop makes the WindowServer re-blend the full
+        // window area every frame, and scrolling photo grids produces
+        // incompressible pixels that push that work past the frame budget on
+        // wide windows. Media views therefore run on a solid backdrop; the
+        // translucent blur remains for writing. The window itself stays
+        // non-opaque so the rounded corners keep compositing correctly.
+        window?.contentView?.layer?.backgroundColor =
+            Theme.background.withAlphaComponent(editable ? Theme.backgroundOpacity : 1).cgColor
         scrollView.isHidden = !editable
         preview.isHidden = editable
         statusPill.isHidden = !editable
