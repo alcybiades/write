@@ -73,6 +73,11 @@ the session. **File → Close Folder** removes the sidebar and keeps your tabs.
   the viewer and never stored in the thumbnail caches.
 - Sidebar controls align with the tabs; the collapse control points in the direction
   it will move. Overflowing tabs scroll horizontally through the window's right edge.
+- In **Files**, right-click a row or empty space for **New Folder…** or **New File…**.
+  The expanded root row also has **New Folder** and **New Markdown** icons. They
+  create inside the selected folder, or beside the selected file; with no selection,
+  they use the root. New files open immediately. Collapsing the root hides its icons.
+  The sidebar toggle animates its width and respects the macOS Reduce Motion setting.
 - The tree refreshes when the window regains focus. Right-click it and choose
   **Refresh Folder** to update it while working. Hidden files and directories are
   omitted; the reference index does not follow symlinks or enter app packages.

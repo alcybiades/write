@@ -445,12 +445,14 @@ final class SidebarIconButton: NSButton {
     }
     override func draw(_ dirtyRect: NSRect) {
         guard let symbolImage else { return }
-        let image = symbolImage.withSymbolConfiguration(.init(paletteColors: [contentTintColor ?? Theme.dim])) ?? symbolImage
+        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+            .applying(.init(paletteColors: [contentTintColor ?? Theme.dim]))
+        let image = symbolImage.withSymbolConfiguration(configuration) ?? symbolImage
         let scale = min(16 / image.size.width, 16 / image.size.height)
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
         image.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height))
         if let chevronName, let chevron = NSImage(systemSymbolName: chevronName, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(paletteColors: [contentTintColor ?? Theme.dim])) {
+            .withSymbolConfiguration(configuration) {
             chevron.draw(in: NSRect(x: bounds.midX + 1, y: bounds.midY - 3, width: 3, height: 6))
         }
     }

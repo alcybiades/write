@@ -40,6 +40,30 @@ enum FileKind {
     }
 }
 
+enum WorkspaceItemKind {
+    case file, markdown, folder
+
+    func create(named name: String, in directory: URL) throws -> URL {
+        var name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != ".", name != "..",
+              !name.contains("/"), !name.contains(":"), !name.contains("\0"), !name.hasPrefix(".") else {
+            throw NSError(domain: "Write", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Enter a visible file or folder name without slashes or colons."])
+        }
+        if self == .markdown && !["md", "markdown"].contains((name as NSString).pathExtension.lowercased()) {
+            name += ".md"
+        }
+        let url = directory.appendingPathComponent(name, isDirectory: self == .folder)
+        if self == .folder {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        } else {
+            // Exclusive creation also protects against a file appearing while the sheet is open.
+            try Data().write(to: url, options: .withoutOverwriting)
+        }
+        return url
+    }
+}
+
 final class FileNode {
     let url: URL
     let isDirectory: Bool

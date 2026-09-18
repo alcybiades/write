@@ -34,6 +34,7 @@ enum Theme {
     static let link = NSColor(hex: 0x7DD3FC)
     static let cursor = NSColor(hex: 0x727272)
     static let selection = NSColor(hex: 0x334A7D)
+    static let sidebarSelection = NSColor(hex: 0x7186A5, alpha: 0.28)
     static let codeBackground = NSColor(hex: 0x2E2E2E, alpha: 0.5)
     /// Distinct instance so the layout manager can tell block bands from
     /// inline chips when padding background rects (compared by identity).

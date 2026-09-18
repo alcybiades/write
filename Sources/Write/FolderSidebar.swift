@@ -5,16 +5,17 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
     var onOpen: ((URL, Bool) -> Void)?
     var onToggleSidebar: (() -> Void)?
     var onMediaMode: ((Bool) -> Void)?
-    private let outline = NSOutlineView()
-    private let scroll = NSScrollView()
+    private let outline = SidebarOutlineView()
+    private let scroll = SidebarScrollView()
     private let toggle = SidebarIconButton()
     private let filesButton = SidebarIconButton()
     private let mediaButton = SidebarIconButton()
     private var root: FileNode?
-    var mediaMode = false { didSet { reload(); refreshControls() } }
+    var mediaMode = false { didSet { if let url = root?.url { setRoot(url) }; refreshControls() } }
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.10).cgColor
         // The sidebar reaches the window's top edge and owns its controls,
         // laid out on the tab row's centerline (cornerPadding + 31pt row).
@@ -47,9 +48,8 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         scroll.hasVerticalScroller = true
         scroll.scrollerStyle = .overlay
         addSubview(scroll)
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Refresh Folder", action: #selector(refresh), keyEquivalent: "").target = self
-        outline.menu = menu
+        outline.contextMenu = { [weak self] in self?.contextMenu() }
+        scroll.contextMenu = { [weak self] in self?.contextMenu() }
     }
     required init?(coder: NSCoder) { fatalError() }
     override func layout() {
@@ -77,18 +77,101 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
             guard let node = outline.item(atRow: row) as? FileNode, outline.isItemExpanded(node) else { return nil }
             return node.url.path
         })
-        root = FileNode(url); reload()
+        let sameRoot = root?.url.standardizedFileURL == url.standardizedFileURL
+        let selected = (outline.item(atRow: outline.selectedRow) as? FileNode)?.url
+        root = FileNode(url)
+        outline.reloadData()
+        if !sameRoot, let root { outline.expandItem(root) }
         var row = 0
         while row < outline.numberOfRows {
             if let node = outline.item(atRow: row) as? FileNode, expanded.contains(node.url.path) { outline.expandItem(node) }
             row += 1
         }
+        if sameRoot, let selected { select(selected) }
+        updateRootActions()
     }
     @objc func refresh() { if let url = root?.url { setRoot(url); onRefresh?() } }
-    private func reload() {
-        outline.reloadData()
-        if let root { outline.expandItem(root) }
+    var creationDirectory: URL? {
+        guard let root else { return nil }
+        guard let node = outline.item(atRow: outline.selectedRow) as? FileNode else { return root.url }
+        return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
     }
+    override func menu(for event: NSEvent) -> NSMenu? { contextMenu() }
+
+    private func contextMenu() -> NSMenu {
+        let menu = NSMenu()
+        if !mediaMode, let directory = creationDirectory {
+            for (title, action) in [("New Folder…", #selector(newFolder(_:))), ("New File…", #selector(newFile(_:)))] {
+                let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+                item.target = self
+                item.representedObject = directory
+            }
+            menu.addItem(.separator())
+        }
+        menu.addItem(withTitle: "Refresh Folder", action: #selector(refresh), keyEquivalent: "").target = self
+        return menu
+    }
+    @objc private func newFolder(_ sender: Any?) { promptForItem(.folder, sender: sender) }
+    @objc private func newFile(_ sender: Any?) { promptForItem(.file, sender: sender) }
+    @objc private func newMarkdown(_ sender: Any?) { promptForItem(.markdown, sender: sender) }
+
+    private func promptForItem(_ kind: WorkspaceItemKind, sender: Any?) {
+        guard !mediaMode, let window,
+              let directory = (sender as? NSMenuItem)?.representedObject as? URL ?? creationDirectory else { return }
+        let alert = NSAlert()
+        alert.messageText = kind == .folder ? "New Folder" : (kind == .markdown ? "New Markdown" : "New File")
+        alert.informativeText = "Create in \(directory.lastPathComponent)"
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: kind == .folder ? "Untitled Folder" : "Untitled.md")
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        field.setAccessibilityLabel("Name")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            do {
+                let url = try kind.create(named: field.stringValue, in: directory)
+                self.refresh()
+                self.reveal(url)
+                if kind != .folder { self.onOpen?(url, false) }
+            } catch {
+                let errorAlert = NSAlert(error: error)
+                errorAlert.beginSheetModal(for: window)
+            }
+        }
+        field.selectText(nil)
+        if kind != .folder, let editor = field.currentEditor() {
+            editor.selectedRange = NSRange(location: 0, length: (field.stringValue as NSString).deletingPathExtension.utf16.count)
+        }
+    }
+
+    private func select(_ url: URL) {
+        for row in 0..<outline.numberOfRows {
+            if (outline.item(atRow: row) as? FileNode)?.url.standardizedFileURL == url.standardizedFileURL {
+                outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                return
+            }
+        }
+    }
+    private func reveal(_ url: URL) {
+        var row = 0
+        while row < outline.numberOfRows {
+            if let node = outline.item(atRow: row) as? FileNode, node.isDirectory,
+               url.standardizedFileURL.path.hasPrefix(node.url.standardizedFileURL.path + "/") || url.standardizedFileURL == node.url.standardizedFileURL {
+                outline.expandItem(node)
+            }
+            row += 1
+        }
+        select(url)
+        outline.scrollRowToVisible(outline.selectedRow)
+    }
+    private func updateRootActions() {
+        guard let root, let cell = outline.view(atColumn: 0, row: outline.row(forItem: root), makeIfNecessary: false) as? SidebarFileCell else { return }
+        cell.showsActions = !mediaMode && outline.isItemExpanded(root)
+    }
+    func outlineViewItemDidExpand(_ notification: Notification) { updateRootActions() }
+    func outlineViewItemDidCollapse(_ notification: Notification) { updateRootActions() }
     private func children(_ item: Any?) -> [FileNode] {
         guard let node = item as? FileNode else { return root.map { [$0] } ?? [] }
         return node.children.filter { !mediaMode || $0.isDirectory }
@@ -96,9 +179,12 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { children(item).count }
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { children(item)[index] }
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? FileNode)?.isDirectory == true }
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        SidebarRowView()
+    }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? FileNode else { return nil }
-        let cell = NSTableCellView()
+        let cell = SidebarFileCell()
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: node.isDirectory ? "folder" : (FileKind.classify(node.url) == .image ? "photo" : "doc"), accessibilityDescription: nil)
         icon.contentTintColor = node.isDirectory ? Theme.heading : Theme.dim
@@ -111,10 +197,16 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor), icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 15), icon.heightAnchor.constraint(equalToConstant: 15),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7), label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         cell.textField = label; cell.imageView = icon; cell.toolTip = node.url.path
+        cell.labelTrailing = label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4)
+        cell.labelTrailing?.isActive = true
+        if node === root {
+            cell.addActions(target: self, folderAction: #selector(newFolder(_:)), markdownAction: #selector(newMarkdown(_:)))
+            cell.showsActions = !mediaMode && outline.isItemExpanded(node)
+        }
         return cell
     }
     @objc private func clicked() {
@@ -122,6 +214,55 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         if node.isDirectory && !mediaMode {
             if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
         } else { onOpen?(node.url, node.isDirectory) }
+    }
+}
+
+private final class SidebarRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        // Keep the same translucent tint when focus moves into the editor.
+        Theme.sidebarSelection.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 1), xRadius: 6, yRadius: 6).fill()
+    }
+}
+
+private final class SidebarOutlineView: NSOutlineView {
+    var contextMenu: (() -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        if row >= 0 { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+        return contextMenu?()
+    }
+}
+
+private final class SidebarScrollView: NSScrollView {
+    var contextMenu: (() -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? { contextMenu?() }
+}
+
+private final class SidebarFileCell: NSTableCellView {
+    var labelTrailing: NSLayoutConstraint?
+    private var actions: [SidebarIconButton] = []
+    var showsActions = false {
+        didSet {
+            actions.forEach { $0.isHidden = !showsActions }
+            labelTrailing?.constant = showsActions ? -54 : -4
+        }
+    }
+    func addActions(target: AnyObject, folderAction: Selector, markdownAction: Selector) {
+        for (symbol, label, action) in [("folder.badge.plus", "New Folder", folderAction), ("doc.badge.plus", "New Markdown", markdownAction)] {
+            let button = SidebarIconButton()
+            SidebarIconButton.configure(button, symbol: symbol, label: label, target: target, action: action)
+            button.contentTintColor = Theme.dim
+            button.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(button)
+            actions.append(button)
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 25), button.heightAnchor.constraint(equalToConstant: 25),
+                button.centerYAnchor.constraint(equalTo: centerYAnchor),
+                button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: actions.count == 1 ? -27 : -2),
+            ])
+        }
     }
 }
 

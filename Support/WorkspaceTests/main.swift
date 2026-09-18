@@ -1,5 +1,6 @@
 import AppKit
 
+setbuf(stdout, nil)
 _ = NSApplication.shared
 var failures = 0
 func check(_ name: String, _ condition: Bool) {
@@ -295,6 +296,104 @@ controller.openInCurrentTab(freshB)
 check("sidebar open keeps untitled buffers in their tab",
       controller.documents.count == untitledTabs + 1 && controller.currentDocument.url == freshB
       && controller.documents.contains { $0.url == nil && $0.storage.string == "scratch" })
+
+// Creation controls follow the selected directory and survive tree refreshes.
+controller.restoreWorkspace(root: root, collapsed: false, width: 220, media: false)
+controller.window?.contentView?.layoutSubtreeIfNeeded()
+let creationSidebar = sidebarPane as! FolderSidebar
+let tree = descendants(creationSidebar).compactMap { $0 as? NSOutlineView }.first!
+func treeNode(_ url: URL) -> FileNode? {
+    (0..<tree.numberOfRows).compactMap { tree.item(atRow: $0) as? FileNode }.first { $0.url.standardizedFileURL.path == url.standardizedFileURL.path }
+}
+func rootActions() -> [NSButton] {
+    guard let cell = tree.view(atColumn: 0, row: 0, makeIfNecessary: true) else { return [] }
+    return descendants(cell).compactMap { $0 as? NSButton }
+}
+check("expanded Files root has two creation icons", rootActions().count == 2 && rootActions().allSatisfy { !$0.isHidden })
+tree.collapseItem(tree.item(atRow: 0))
+check("collapsed root hides creation icons", rootActions().allSatisfy(\.isHidden))
+creationSidebar.refresh()
+check("refresh preserves collapsed root", !tree.isItemExpanded(tree.item(atRow: 0)))
+tree.expandItem(tree.item(atRow: 0))
+let notes = root.appendingPathComponent("Notes")
+tree.expandItem(treeNode(notes))
+tree.selectRowIndexes(IndexSet(integer: tree.row(forItem: treeNode(notes))), byExtendingSelection: false)
+check("selected folder is creation destination", creationSidebar.creationDirectory?.standardizedFileURL.path == notes.standardizedFileURL.path)
+creationSidebar.refresh()
+check("refresh preserves selected directory", creationSidebar.creationDirectory?.standardizedFileURL.path == notes.standardizedFileURL.path)
+func settleSheet() { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+func createFromButton(_ label: String, name: String, cancel: Bool = false) {
+    rootActions().first { $0.toolTip == label }!.performClick(nil)
+    guard let sheet = controller.window?.attachedSheet,
+          let field = descendants(sheet.contentView!).compactMap({ $0 as? NSTextField }).first(where: { $0.isEditable }) else {
+        check("creation presents naming sheet", false); return
+    }
+    field.stringValue = name
+    controller.window?.endSheet(sheet, returnCode: cancel ? .alertSecondButtonReturn : .alertFirstButtonReturn)
+    settleSheet()
+}
+createFromButton("New Folder", name: "Created Folder")
+let createdFolder = notes.appendingPathComponent("Created Folder")
+check("folder icon creates inside selected folder and selects result", FileKind.classify(createdFolder) == .folder && creationSidebar.creationDirectory?.standardizedFileURL.path == createdFolder.standardizedFileURL.path)
+createFromButton("New Markdown", name: "First note")
+let createdNote = createdFolder.appendingPathComponent("First note.md")
+check("markdown icon adds extension and opens new file", FileManager.default.fileExists(atPath: createdNote.path) && controller.currentDocument.url?.standardizedFileURL.path == createdNote.standardizedFileURL.path)
+check("selected file targets its parent", creationSidebar.creationDirectory?.standardizedFileURL.path == createdFolder.standardizedFileURL.path)
+createFromButton("New Markdown", name: "Cancelled", cancel: true)
+check("cancel creates nothing", !FileManager.default.fileExists(atPath: createdFolder.appendingPathComponent("Cancelled.md").path))
+let contextPoint = tree.convert(NSPoint(x: 60, y: tree.rect(ofRow: tree.row(forItem: treeNode(notes))).midY), to: nil)
+let contextEvent = NSEvent.mouseEvent(with: .rightMouseDown, location: contextPoint, modifierFlags: [], timestamp: 0,
+    windowNumber: controller.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+let creationMenu = tree.menu(for: contextEvent)!
+check("right click targets clicked directory", creationSidebar.creationDirectory?.standardizedFileURL.path == notes.standardizedFileURL.path && (creationMenu.items.first?.representedObject as? URL)?.standardizedFileURL.path == notes.standardizedFileURL.path)
+check("Files context menu offers file and folder creation", creationMenu.items.contains { $0.title == "New File…" } && creationMenu.items.contains { $0.title == "New Folder…" })
+creationSidebar.mediaMode = true
+check("Media mode hides creation actions", rootActions().allSatisfy(\.isHidden) && tree.menu(for: contextEvent)?.items.count == 1)
+creationSidebar.mediaMode = false
+tree.collapseItem(tree.item(atRow: 0))
+tree.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+let rootContextPoint = tree.convert(NSPoint(x: 60, y: tree.rect(ofRow: 0).midY), to: nil)
+let rootContextEvent = NSEvent.mouseEvent(with: .rightMouseDown, location: rootContextPoint, modifierFlags: [], timestamp: 0,
+    windowNumber: controller.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+let rootMenu = tree.menu(for: rootContextEvent)!
+let newFileItem = rootMenu.items.first { $0.title == "New File…" }!
+NSApp.sendAction(newFileItem.action!, to: newFileItem.target, from: newFileItem)
+if let sheet = controller.window?.attachedSheet,
+   let field = descendants(sheet.contentView!).compactMap({ $0 as? NSTextField }).first(where: { $0.isEditable }) {
+    field.stringValue = "From context.md"
+    controller.window?.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+    settleSheet()
+}
+check("context creation expands a collapsed root and reveals the file", tree.isItemExpanded(tree.item(atRow: 0)) && (tree.item(atRow: tree.selectedRow) as? FileNode)?.url.lastPathComponent == "From context.md")
+let arbitrary = try WorkspaceItemKind.file.create(named: "data.json", in: createdFolder)
+check("new file preserves arbitrary extension", arbitrary.lastPathComponent == "data.json")
+try "keep me".write(to: arbitrary, atomically: true, encoding: .utf8)
+do { _ = try WorkspaceItemKind.file.create(named: "data.json", in: createdFolder); check("duplicate file rejected", false) }
+catch { check("duplicate file preserves contents", try String(contentsOf: arbitrary, encoding: .utf8) == "keep me") }
+do { _ = try WorkspaceItemKind.folder.create(named: "Created Folder", in: notes); check("duplicate folder rejected", false) }
+catch { check("duplicate folder preserves contents", FileManager.default.fileExists(atPath: createdNote.path)) }
+for invalid in ["", " ", ".", "..", "../escape", "a/b", "a:b", ".hidden"] {
+    do { _ = try WorkspaceItemKind.markdown.create(named: invalid, in: notes); check("invalid name rejected: \(invalid)", false) }
+    catch { }
+}
+snapshot("sidebar-creation")
+let expandedWidth = creationSidebar.frame.width
+control.performClick(nil)
+if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+    RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+    let presentedWidth = creationSidebar.layer?.presentation()?.bounds.width ?? 0
+    check("sidebar width passes through intermediate animation frames", presentedWidth > 0 && presentedWidth < expandedWidth)
+}
+settleSheet()
+check("animated collapse hides sidebar and releases editor width", creationSidebar.isHidden && abs(controller.textView.enclosingScrollView!.frame.minX) < 0.5)
+let expandControl = descendants(bar).compactMap { $0 as? NSButton }.first { $0.toolTip == "Expand sidebar" }!
+expandControl.performClick(nil)
+settleSheet()
+check("animated expansion restores sidebar width", !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
+control.performClick(nil)
+expandControl.performClick(nil)
+settleSheet()
+check("rapid sidebar toggles settle expanded", !controller.sidebarCollapsed && !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
 
 controller.window?.orderOut(nil); restored.window?.orderOut(nil)
 print(failures == 0 ? "ALL WORKSPACE TESTS PASS" : "\(failures) FAILURES")

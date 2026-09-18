@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 /// One editor window: its own tab set, text view, inline title, status line,
 /// and autosave. Menu actions reach the key window's controller through the
@@ -20,6 +21,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private let divider = SidebarDivider()
     private let preview = FilePreview()
     private var sidebarWidthConstraint: NSLayoutConstraint!
+    private var sidebarAnimationID: UUID?
     private(set) var workspace: Workspace?
     private(set) var sidebarCollapsed = false
     private(set) var sidebarWidth: CGFloat = 220
@@ -156,11 +158,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         sidebarWidthConstraint = sidebar.widthAnchor.constraint(equalToConstant: 0)
         tabBar.onToggleSidebar = { [weak self] in
             guard let self else { return }
-            self.sidebarCollapsed.toggle(); self.updateSidebar(); self.app?.sessionChanged()
+            self.sidebarCollapsed.toggle(); self.updateSidebar(animated: true); self.app?.sessionChanged()
         }
         sidebar.onToggleSidebar = { [weak self] in
             guard let self else { return }
-            self.sidebarCollapsed.toggle(); self.updateSidebar(); self.app?.sessionChanged()
+            self.sidebarCollapsed.toggle(); self.updateSidebar(animated: true); self.app?.sessionChanged()
         }
         sidebar.onMediaMode = { [weak self] media in
             guard let self else { return }
@@ -549,13 +551,40 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     // MARK: - File operations
 
-    private func updateSidebar() {
+    private func updateSidebar(animated: Bool = false) {
+        // Resize notifications fire as the editor follows the animated sidebar.
+        guard animated || sidebarAnimationID == nil else { return }
         let visible = workspace != nil
-        let width = visible && !sidebarCollapsed ? min(sidebarWidth, max(150, (window?.frame.width ?? 640) - 240)) : 0
-        sidebarWidthConstraint?.constant = width
-        sidebar.isHidden = !visible || sidebarCollapsed
-        divider.isHidden = !visible || sidebarCollapsed
-        tabBar.configureSidebar(visible: visible, collapsed: sidebarCollapsed, width: width)
+        let expanded = visible && !sidebarCollapsed
+        let width = expanded ? min(sidebarWidth, max(150, (window?.frame.width ?? 640) - 240)) : 0
+        let applyLayout = {
+            self.sidebarWidthConstraint?.constant = width
+            self.tabBar.configureSidebar(visible: visible, collapsed: self.sidebarCollapsed, width: width)
+        }
+        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let content = window?.contentView else {
+            sidebarAnimationID = nil
+            applyLayout()
+            sidebar.isHidden = !expanded
+            divider.isHidden = !expanded
+            return
+        }
+        content.layoutSubtreeIfNeeded()
+        let animationID = UUID()
+        sidebarAnimationID = animationID
+        sidebar.isHidden = false
+        divider.isHidden = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.24
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            applyLayout()
+            content.layoutSubtreeIfNeeded()
+        } completionHandler: { [weak self] in
+            guard let self, self.sidebarAnimationID == animationID else { return }
+            self.sidebarAnimationID = nil
+            self.updateSidebar()
+        }
     }
 
     func restoreWorkspace(root: URL, collapsed: Bool, width: CGFloat, media: Bool) {
