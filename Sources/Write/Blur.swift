@@ -14,10 +14,9 @@ private func CGSSetWindowBackgroundBlurRadius(
     _ connection: CGSConnectionID, _ windowNumber: UInt32, _ radius: UInt32
 ) -> Int32
 
-/// Borderless window that can still take keyboard focus. Borderless is the
-/// point: a titled window's frame view draws its own legacy small-radius
-/// corners underneath our rounded layer, leaving dark aliased fringes.
-final class BorderlessWindow: NSWindow {
+/// Keep AppKit's window shape and shadow while drawing our own controls.
+/// The full-size content view paints right up to that single native clip.
+final class WriteWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
@@ -30,16 +29,18 @@ func applyTerminalBackdrop(to window: NSWindow) -> NSView {
     window.isOpaque = false
     window.backgroundColor = .clear
     window.appearance = NSAppearance(named: .darkAqua)
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
+    for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+        window.standardWindowButton(button)?.isHidden = true
+    }
 
     let container = NSView()
     container.wantsLayer = true
     container.layer?.backgroundColor =
         Theme.background.withAlphaComponent(Theme.backgroundOpacity).cgColor
-    // The window itself is clear, so the visible shape is this layer: round
-    // it with the modern large continuous radius.
-    container.layer?.cornerRadius = Theme.windowCornerRadius
-    container.layer?.cornerCurve = .continuous
-    container.layer?.masksToBounds = true
+    // Do not round the backdrop separately: AppKit clips the tint, content,
+    // blur and native edge to the same window outline, including during resize.
     window.contentView = container
 
     CGSSetWindowBackgroundBlurRadius(

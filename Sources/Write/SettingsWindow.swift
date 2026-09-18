@@ -17,9 +17,9 @@ final class SettingsWindowController: NSObject {
     }
 
     private func build() {
-        let panel = BorderlessWindow(
+        let panel = WriteWindow(
             contentRect: NSRect(x: 0, y: 0, width: 400, height: 130),
-            styleMask: [.borderless, .closable],
+            styleMask: [.titled, .fullSizeContentView, .closable],
             backing: .buffered,
             defer: false
         )
@@ -29,7 +29,7 @@ final class SettingsWindowController: NSObject {
 
         let container = applyTerminalBackdrop(to: panel)
 
-        // Borderless: no titlebar close widget, so draw our own × in the
+        // Native titlebar controls are hidden, so draw our own × in the
         // corner, mirroring the tab strip's.
         let close = HoverCloseButton()
         close.onClick = { [weak panel] in panel?.close() }
@@ -44,7 +44,7 @@ final class SettingsWindowController: NSObject {
 
         let heading = NSTextField(labelWithString: "settings")
         heading.font = Theme.font(size: 12)
-        heading.textColor = Theme.dim
+        heading.textColor = Theme.secondary
 
         let fontLabel = NSTextField(labelWithString: "font")
         fontLabel.font = Theme.font(size: 13)

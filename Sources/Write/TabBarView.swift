@@ -3,11 +3,9 @@ import AppKit
 /// Minimal terminal-styled tab strip with hover-close and drag-to-detach.
 final class TabBarView: NSView {
 
-    /// Equal gap from the window's top-left corner to the first tab, both
-    /// axes. The pill radius is windowCornerRadius − cornerPadding so the
-    /// tab's arc is concentric with the window's arc.
+    /// Equal gap from the window's top-left corner to the first tab, both axes.
     static let cornerPadding: CGFloat = 15
-    static var pillRadius: CGFloat { Theme.windowCornerRadius - cornerPadding }
+    static let pillRadius: CGFloat = 11
 
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
@@ -92,9 +90,11 @@ final class TabBarView: NSView {
         controlsWidth.constant = visible ? (collapsed ? 45 : width) : 0
         controls.isHidden = !visible
         toggle.isHidden = !collapsed
-        toggle.contentTintColor = Theme.dim
+        toggle.contentTintColor = Theme.secondary
         toggle.needsDisplay = true
     }
+    func fadeInTabs() { SidebarTransition.fadeIn([tabScroll]) }
+
     @objc private func toggleSidebar() { onToggleSidebar?() }
 
     func update(tabs: [(name: String, edited: Bool)], selected: Int) {
@@ -183,7 +183,7 @@ private final class NewTabButton: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        drawGlyphCentered("+", size: 22, color: hovered ? Theme.foreground : Theme.dim, in: bounds)
+        drawGlyphCentered("+", size: 22, color: hovered ? Theme.foreground : Theme.secondary, in: bounds)
     }
 }
 
@@ -243,7 +243,7 @@ private final class TabItemView: NSView {
             : NSColor.clear.cgColor
 
         label.font = Theme.font(size: 13.5)
-        label.textColor = active ? Theme.foreground : Theme.dim
+        label.textColor = active ? Theme.foreground : Theme.secondary
         label.lineBreakMode = .byTruncatingMiddle
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -398,8 +398,8 @@ private final class TabItemView: NSView {
 }
 
 /// A small "×" that swallows its own clicks so they don't select the tab.
-/// Also the settings panel's close affordance — it is borderless, so it has
-/// no titlebar widget of its own.
+/// Also the settings panel's close affordance; its native titlebar controls
+/// are hidden to match the editor.
 final class HoverCloseButton: NSView {
 
     var onClick: (() -> Void)?
@@ -424,7 +424,7 @@ final class HoverCloseButton: NSView {
     override func mouseExited(with event: NSEvent) { hovered = false }
 
     override func draw(_ dirtyRect: NSRect) {
-        drawGlyphCentered("×", size: 22, color: hovered ? Theme.foreground : Theme.dim, in: bounds)
+        drawGlyphCentered("×", size: 22, color: hovered ? Theme.foreground : Theme.secondary, in: bounds)
     }
 }
 
@@ -446,7 +446,7 @@ final class SidebarIconButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {
         guard let symbolImage else { return }
         let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
-            .applying(.init(paletteColors: [contentTintColor ?? Theme.dim]))
+            .applying(.init(paletteColors: [contentTintColor ?? Theme.secondary]))
         let image = symbolImage.withSymbolConfiguration(configuration) ?? symbolImage
         let scale = min(16 / image.size.width, 16 / image.size.height)
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)

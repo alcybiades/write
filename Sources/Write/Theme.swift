@@ -29,6 +29,8 @@ enum Theme {
     static let code = NSColor(hex: 0x55E6A5)
     static let codeAmber = NSColor(hex: 0xFFB86C)
     static let dim = NSColor(hex: 0x526078)
+    // Translucent secondary chrome; separate from subdued Markdown syntax.
+    static let secondary = NSColor.white.withAlphaComponent(0.5)
     static let listMarker = NSColor(hex: 0xFFD166)
     static let quote = NSColor(hex: 0xBF8EE8)
     static let link = NSColor(hex: 0x7DD3FC)
@@ -49,8 +51,6 @@ enum Theme {
 
     static let lineHeightMultiple: CGFloat = 1.16
     static let padding: CGFloat = 28
-    /// Modern macOS window rounding; the tab strip inset follows it.
-    static let windowCornerRadius: CGFloat = 26
 
     /// Text colors offered by the selection toolbar. Serialized to markdown
     /// as inline HTML spans, so files stay portable.

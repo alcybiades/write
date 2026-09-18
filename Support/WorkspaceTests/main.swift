@@ -66,6 +66,9 @@ let controller = EditorWindowController(app: nil)
 controller.window?.setFrame(NSRect(x: 100, y: 100, width: 960, height: 720), display: true)
 controller.showWindow(nil)
 check("single-file starts without sidebar", controller.workspace == nil)
+check("window uses the native frame with full-size content", controller.window!.styleMask.contains([.titled, .fullSizeContentView]))
+check("backdrop has no competing rounded clip", controller.window!.contentView!.layer?.cornerRadius == 0)
+check("native titlebar buttons stay hidden", [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].allSatisfy { controller.window!.standardWindowButton($0)?.isHidden == true })
 check("open markdown", controller.open(url: source))
 let count = controller.documents.count
 check("open folder", controller.open(url: root))
@@ -381,13 +384,17 @@ let expandedWidth = creationSidebar.frame.width
 control.performClick(nil)
 if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
     RunLoop.current.run(until: Date().addingTimeInterval(0.06))
-    let presentedWidth = creationSidebar.layer?.presentation()?.bounds.width ?? 0
-    check("sidebar width passes through intermediate animation frames", presentedWidth > 0 && presentedWidth < expandedWidth)
+    let backdrop = controller.window!.contentView!.subviews.first { $0 is SidebarBackdrop }!
+    let presentedWidth = backdrop.layer?.sublayers?.first?.presentation()?.frame.maxX ?? 0
+    check("only backdrop width passes through intermediate frames", presentedWidth > 0 && presentedWidth < expandedWidth)
+    check("editor is already at collapsed destination", abs(controller.textView.enclosingScrollView!.frame.minX) < 0.5)
+    check("toggle never fades", descendants(bar).compactMap { $0 as? NSButton }.first { $0.toolTip == "Expand sidebar" }?.layer?.animation(forKey: "sidebarFade") == nil)
 }
 settleSheet()
 check("animated collapse hides sidebar and releases editor width", creationSidebar.isHidden && abs(controller.textView.enclosingScrollView!.frame.minX) < 0.5)
 let expandControl = descendants(bar).compactMap { $0 as? NSButton }.first { $0.toolTip == "Expand sidebar" }!
 expandControl.performClick(nil)
+check("expansion places sidebar at its final width immediately", abs(creationSidebar.frame.width - expandedWidth) < 0.5)
 settleSheet()
 check("animated expansion restores sidebar width", !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
 control.performClick(nil)
@@ -395,6 +402,8 @@ expandControl.performClick(nil)
 settleSheet()
 check("rapid sidebar toggles settle expanded", !controller.sidebarCollapsed && !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
 
+// These test-only drafts must not reappear in the user's next app session.
+for document in controller.documents + restored.documents { RecoveryStore.remove(document) }
 controller.window?.orderOut(nil); restored.window?.orderOut(nil)
 print(failures == 0 ? "ALL WORKSPACE TESTS PASS" : "\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

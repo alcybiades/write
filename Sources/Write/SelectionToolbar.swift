@@ -174,7 +174,7 @@ private final class ToolbarIconButton: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func applyTint() {
-        let color = hovered ? Theme.foreground : Theme.dim
+        let color = hovered ? Theme.foreground : Theme.secondary
         imageView.contentTintColor = color
         fallbackLabel.textColor = color
     }

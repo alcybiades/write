@@ -50,7 +50,7 @@ final class ReferencePicker: NSObject, NSTableViewDataSource, NSTableViewDelegat
     func numberOfRows(in tableView: NSTableView) -> Int { max(1, candidates.count) }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let label = NSTextField(labelWithString: candidates.isEmpty ? "No matching files" : candidates[row].1)
-        label.font = Theme.font(size: 12); label.textColor = candidates.isEmpty ? Theme.dim : Theme.foreground
+        label.font = Theme.font(size: 12); label.textColor = candidates.isEmpty ? Theme.secondary : Theme.foreground
         label.lineBreakMode = .byTruncatingMiddle
         return label
     }

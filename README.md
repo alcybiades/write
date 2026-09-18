@@ -77,7 +77,8 @@ the session. **File → Close Folder** removes the sidebar and keeps your tabs.
   The expanded root row also has **New Folder** and **New Markdown** icons. They
   create inside the selected folder, or beside the selected file; with no selection,
   they use the root. New files open immediately. Collapsing the root hides its icons.
-  The sidebar toggle animates its width and respects the macOS Reduce Motion setting.
+  The sidebar backdrop reveals from the left while content fades into its final
+  position; the toggle stays visible. This respects the macOS Reduce Motion setting.
 - The tree refreshes when the window regains focus. Right-click it and choose
   **Refresh Folder** to update it while working. Hidden files and directories are
   omitted; the reference index does not follow symlinks or enter app packages.

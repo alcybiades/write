@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 
 final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     var onRefresh: (() -> Void)?
@@ -16,7 +17,6 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         super.init(frame: frame)
         wantsLayer = true
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.10).cgColor
         // The sidebar reaches the window's top edge and owns its controls,
         // laid out on the tab row's centerline (cornerPadding + 31pt row).
         for (button, symbol, label, action) in [
@@ -61,10 +61,13 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         let controlsHeight = TabBarView.cornerPadding + 31 + 8
         scroll.frame = bounds.width < 12 ? .zero : NSRect(x: 6, y: 8, width: bounds.width - 12, height: max(0, bounds.height - controlsHeight - 8))
     }
+    func fadeInContents() {
+        SidebarTransition.fadeIn([filesButton, mediaButton, scroll])
+    }
     private func refreshControls() {
-        toggle.contentTintColor = Theme.dim
-        filesButton.contentTintColor = mediaMode ? Theme.dim : Theme.foreground
-        mediaButton.contentTintColor = mediaMode ? Theme.foreground : Theme.dim
+        toggle.contentTintColor = Theme.secondary
+        filesButton.contentTintColor = mediaMode ? Theme.secondary : Theme.foreground
+        mediaButton.contentTintColor = mediaMode ? Theme.foreground : Theme.secondary
         filesButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(mediaMode ? 0 : 0.08).cgColor
         mediaButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(mediaMode ? 0.08 : 0).cgColor
         [toggle, filesButton, mediaButton].forEach { $0.needsDisplay = true }
@@ -187,7 +190,7 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         let cell = SidebarFileCell()
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: node.isDirectory ? "folder" : (FileKind.classify(node.url) == .image ? "photo" : "doc"), accessibilityDescription: nil)
-        icon.contentTintColor = node.isDirectory ? Theme.heading : Theme.dim
+        icon.contentTintColor = node.isDirectory ? Theme.heading : Theme.secondary
         let label = NSTextField(labelWithString: node.url.lastPathComponent)
         label.font = Theme.font(size: 13.5)
         label.textColor = Theme.foreground.withAlphaComponent(0.85)
@@ -214,6 +217,65 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         if node.isDirectory && !mediaMode {
             if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
         } else { onOpen?(node.url, node.isDirectory) }
+    }
+}
+
+/// Only this backdrop changes width. All interactive views use their final layout.
+final class SidebarBackdrop: NSView {
+    private let fill = CALayer()
+    private let boundary = CALayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        fill.anchorPoint = .zero
+        fill.backgroundColor = NSColor.black.withAlphaComponent(0.10).cgColor
+        boundary.backgroundColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        fill.addSublayer(boundary)
+        layer?.addSublayer(fill)
+        autoresizingMask = [.height]
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(expanded: Bool, width: CGFloat, height: CGFloat, animated: Bool) {
+        let interruptedWidth = fill.animation(forKey: "reveal") != nil ? fill.presentation()?.frame.maxX : nil
+        frame = NSRect(x: 0, y: 0, width: width, height: height)
+        let minimumWidth = width * 0.2
+        let destination = expanded ? width : 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Slide a full-width fill through the clip view. Its child boundary
+        // travels with it, keeping a constant one-point stroke at the edge.
+        fill.bounds = NSRect(x: 0, y: 0, width: width, height: height)
+        fill.position = NSPoint(x: destination - width, y: 0)
+        boundary.frame = NSRect(x: width - 1, y: 0, width: 1, height: height)
+        CATransaction.commit()
+        fill.removeAnimation(forKey: "reveal")
+        isHidden = !expanded && !animated
+        if animated {
+            let reveal = CABasicAnimation(keyPath: "position.x")
+            reveal.fromValue = (interruptedWidth ?? (expanded ? minimumWidth : width)) - width
+            reveal.toValue = destination - width
+            reveal.duration = SidebarTransition.duration
+            reveal.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            fill.add(reveal, forKey: "reveal")
+        }
+    }
+}
+
+enum SidebarTransition {
+    static let duration: TimeInterval = 0.20
+    static func fadeIn(_ views: [NSView]) {
+        for view in views where !view.isHidden {
+            view.wantsLayer = true
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            fade.duration = duration
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            view.layer?.add(fade, forKey: "sidebarFade")
+        }
     }
 }
 
@@ -253,7 +315,7 @@ private final class SidebarFileCell: NSTableCellView {
         for (symbol, label, action) in [("folder.badge.plus", "New Folder", folderAction), ("doc.badge.plus", "New Markdown", markdownAction)] {
             let button = SidebarIconButton()
             SidebarIconButton.configure(button, symbol: symbol, label: label, target: target, action: action)
-            button.contentTintColor = Theme.dim
+            button.contentTintColor = Theme.secondary
             button.translatesAutoresizingMaskIntoConstraints = false
             addSubview(button)
             actions.append(button)
@@ -270,10 +332,7 @@ final class SidebarDivider: NSView {
     var onResize: ((CGFloat) -> Void)?
     override var mouseDownCanMoveWindow: Bool { false }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.withAlphaComponent(0.07).setFill()
-        NSRect(x: bounds.midX, y: 0, width: 1, height: bounds.height).fill()
-    }
+    // This view is only the resize hit target; the backdrop owns the visible line.
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
         while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {

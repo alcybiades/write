@@ -84,7 +84,7 @@ final class BreadcrumbBar: NSView {
             if index > 0 {
                 let separator = NSImageView()
                 separator.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
-                separator.contentTintColor = Theme.dim
+                separator.contentTintColor = Theme.secondary
                 append(separator, size: NSSize(width: 5, height: 9))
             }
             let name = path.lastPathComponent.isEmpty ? "/" : path.lastPathComponent
@@ -95,7 +95,7 @@ final class BreadcrumbBar: NSView {
             } else {
                 let button = NSButton(title: name, target: self, action: #selector(navigate(_:)))
                 button.isBordered = false; button.bezelStyle = .inline
-                button.font = Theme.font(size: 12.5); button.contentTintColor = Theme.dim
+                button.font = Theme.font(size: 12.5); button.contentTintColor = Theme.secondary
                 // Keep scrolling headers out of AppKit's tooltip manager.
                 button.tag = index
                 button.setAccessibilityLabel("Open gallery: " + name)

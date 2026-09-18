@@ -1,5 +1,4 @@
 import AppKit
-import QuartzCore
 
 /// One editor window: its own tab set, text view, inline title, status line,
 /// and autosave. Menu actions reach the key window's controller through the
@@ -17,6 +16,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private var tabBar: TabBarView!
     private var statusLabel: NSTextField!
     private var statusPill: NSView!
+    private let sidebarBackdrop = SidebarBackdrop()
     private let sidebar = FolderSidebar()
     private let divider = SidebarDivider()
     private let preview = FilePreview()
@@ -42,9 +42,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     init(documents: [Document] = [], app: AppDelegate?) {
         self.documents = documents.isEmpty ? [Document()] : documents
         self.app = app
-        let window = BorderlessWindow(
+        let window = WriteWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 700),
-            styleMask: [.borderless, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .fullSizeContentView, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -99,7 +99,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         // Single visual line: a huge fixed container width, clipped by frame.
         titleView.textContainer?.widthTracksTextView = false
         titleView.textContainer?.size = NSSize(width: 10000, height: 10000)
-        titleView.textColor = NSColor.white.withAlphaComponent(0.5)
+        titleView.textColor = Theme.secondary
         titleView.insertionPointColor = Theme.cursor
         titleView.selectedTextAttributes = [
             .backgroundColor: Theme.selection,
@@ -128,7 +128,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
         statusLabel = NSTextField(labelWithString: "")
         statusLabel.font = Theme.font(size: 11)
-        statusLabel.textColor = Theme.dim.withAlphaComponent(0.8)
+        statusLabel.textColor = Theme.secondary
         statusLabel.alignment = .right
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -152,6 +152,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         divider.translatesAutoresizingMaskIntoConstraints = false
         preview.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(sidebarBackdrop)
         container.addSubview(sidebar)
         container.addSubview(divider)
         container.addSubview(preview)
@@ -552,35 +553,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     // MARK: - File operations
 
     private func updateSidebar(animated: Bool = false) {
-        // Resize notifications fire as the editor follows the animated sidebar.
-        guard animated || sidebarAnimationID == nil else { return }
+        guard animated || sidebarAnimationID == nil, let content = window?.contentView else { return }
         let visible = workspace != nil
         let expanded = visible && !sidebarCollapsed
-        let width = expanded ? min(sidebarWidth, max(150, (window?.frame.width ?? 640) - 240)) : 0
-        let applyLayout = {
-            self.sidebarWidthConstraint?.constant = width
-            self.tabBar.configureSidebar(visible: visible, collapsed: self.sidebarCollapsed, width: width)
-        }
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let content = window?.contentView else {
-            sidebarAnimationID = nil
-            applyLayout()
+        let width = min(sidebarWidth, max(150, content.bounds.width - 240))
+        let animate = animated && visible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animationID = UUID()
+        // Suppress resize callbacks while assigning the final geometry.
+        sidebarAnimationID = animationID
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            sidebarWidthConstraint.constant = expanded ? width : 0
             sidebar.isHidden = !expanded
             divider.isHidden = !expanded
-            return
-        }
-        content.layoutSubtreeIfNeeded()
-        let animationID = UUID()
-        sidebarAnimationID = animationID
-        sidebar.isHidden = false
-        divider.isHidden = false
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.24
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            context.allowsImplicitAnimation = true
-            applyLayout()
+            tabBar.configureSidebar(visible: visible, collapsed: sidebarCollapsed, width: expanded ? width : 0)
             content.layoutSubtreeIfNeeded()
-        } completionHandler: { [weak self] in
+        }
+        sidebarBackdrop.configure(expanded: expanded, width: width, height: content.bounds.height, animated: animate)
+        guard animate else { sidebarAnimationID = nil; return }
+        if expanded { sidebar.fadeInContents() }
+        tabBar.fadeInTabs()
+        SidebarTransition.fadeIn([scrollView, preview])
+        DispatchQueue.main.asyncAfter(deadline: .now() + SidebarTransition.duration) { [weak self] in
             guard let self, self.sidebarAnimationID == animationID else { return }
             self.sidebarAnimationID = nil
             self.updateSidebar()
@@ -796,7 +791,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         savedFlashTimer?.invalidate()
         savedFlashTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
             guard let self else { return }
-            statusLabel.textColor = Theme.dim.withAlphaComponent(0.8)
+            statusLabel.textColor = Theme.secondary
             updateStatus()
         }
     }
