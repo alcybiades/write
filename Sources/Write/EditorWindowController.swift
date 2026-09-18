@@ -130,20 +130,20 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         statusLabel.alignment = .right
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // A translucent in-window blur the same color as the backdrop: over
-        // empty background it is invisible (blurring a flat color yields the
-        // same color); it only becomes apparent when text passes beneath.
+        // A translucent backdrop-colored pill, softening text that passes
+        // beneath. It must never use Core Image backgroundFilters: one live
+        // CI filter anywhere in the layer tree (even on a hidden view) pushes
+        // the whole window onto the WindowServer's uncached compositing path,
+        // and any full-window damage — a wide translucent gallery scrolling —
+        // then saturates a WindowServer core. Because WindowServer also
+        // routes input, that starves event delivery too: trackpad scrolling
+        // froze until the fingers lifted.
         statusPill = NSView()
         statusPill.wantsLayer = true
-        statusPill.layerUsesCoreImageFilters = true
-        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.25).cgColor
+        statusPill.layer?.backgroundColor = Theme.background.withAlphaComponent(0.85).cgColor
         statusPill.layer?.cornerRadius = 7
         statusPill.layer?.cornerCurve = .continuous
         statusPill.layer?.masksToBounds = true
-        if let blur = CIFilter(name: "CIGaussianBlur") {
-            blur.setValue(7, forKey: kCIInputRadiusKey)
-            statusPill.layer?.backgroundFilters = [blur]
-        }
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         statusPill.addSubview(statusLabel)
 
@@ -413,14 +413,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     private func refreshChrome() {
         let editable = currentDocument.kind == .markdown
-        // A translucent backdrop makes the WindowServer re-blend the full
-        // window area every frame, and scrolling photo grids produces
-        // incompressible pixels that push that work past the frame budget on
-        // wide windows. Media views therefore run on a solid backdrop; the
-        // translucent blur remains for writing. The window itself stays
-        // non-opaque so the rounded corners keep compositing correctly.
-        window?.contentView?.layer?.backgroundColor =
-            Theme.background.withAlphaComponent(editable ? Theme.backgroundOpacity : 1).cgColor
         scrollView.isHidden = !editable
         preview.isHidden = editable
         statusPill.isHidden = !editable
