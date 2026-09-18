@@ -3,14 +3,31 @@ import AppKit
 final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
     var onRefresh: (() -> Void)?
     var onOpen: ((URL, Bool) -> Void)?
+    var onToggleSidebar: (() -> Void)?
+    var onMediaMode: ((Bool) -> Void)?
     private let outline = NSOutlineView()
     private let scroll = NSScrollView()
+    private let toggle = SidebarIconButton()
+    private let filesButton = SidebarIconButton()
+    private let mediaButton = SidebarIconButton()
     private var root: FileNode?
-    var mediaMode = false { didSet { reload() } }
+    var mediaMode = false { didSet { reload(); refreshControls() } }
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.10).cgColor
+        // The sidebar reaches the window's top edge and owns its controls,
+        // laid out on the tab row's centerline (cornerPadding + 31pt row).
+        for (button, symbol, label, action) in [
+            (toggle, "sidebar.left", "Collapse sidebar", #selector(collapse)),
+            (filesButton, "doc", "Files", #selector(selectFiles)),
+            (mediaButton, "photo", "Media", #selector(selectMedia)),
+        ] {
+            SidebarIconButton.configure(button, symbol: symbol, label: label, target: self, action: action)
+            addSubview(button)
+        }
+        toggle.chevronName = "chevron.left"
+        refreshControls()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("files"))
         outline.addTableColumn(column)
         outline.outlineTableColumn = column
@@ -37,8 +54,24 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
     required init?(coder: NSCoder) { fatalError() }
     override func layout() {
         super.layout()
-        scroll.frame = bounds.width < 12 ? .zero : NSRect(x: 6, y: 8, width: bounds.width - 12, height: max(0, bounds.height - 16))
+        let rowY = bounds.height - TabBarView.cornerPadding - 31
+        toggle.frame = NSRect(x: TabBarView.cornerPadding, y: rowY, width: 30, height: 31)
+        filesButton.frame = NSRect(x: 55, y: rowY, width: 30, height: 31)
+        mediaButton.frame = NSRect(x: 93, y: rowY, width: 30, height: 31)
+        let controlsHeight = TabBarView.cornerPadding + 31 + 8
+        scroll.frame = bounds.width < 12 ? .zero : NSRect(x: 6, y: 8, width: bounds.width - 12, height: max(0, bounds.height - controlsHeight - 8))
     }
+    private func refreshControls() {
+        toggle.contentTintColor = Theme.dim
+        filesButton.contentTintColor = mediaMode ? Theme.dim : Theme.foreground
+        mediaButton.contentTintColor = mediaMode ? Theme.foreground : Theme.dim
+        filesButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(mediaMode ? 0 : 0.08).cgColor
+        mediaButton.layer?.backgroundColor = NSColor.white.withAlphaComponent(mediaMode ? 0.08 : 0).cgColor
+        [toggle, filesButton, mediaButton].forEach { $0.needsDisplay = true }
+    }
+    @objc private func collapse() { onToggleSidebar?() }
+    @objc private func selectFiles() { onMediaMode?(false) }
+    @objc private func selectMedia() { onMediaMode?(true) }
     func setRoot(_ url: URL) {
         let expanded = Set((0..<outline.numberOfRows).compactMap { row -> String? in
             guard let node = outline.item(atRow: row) as? FileNode, outline.isItemExpanded(node) else { return nil }

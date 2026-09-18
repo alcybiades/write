@@ -122,7 +122,8 @@ var galleryPosition = galleryScroll.contentView.bounds.origin
 func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
 let bar = controller.window!.contentView!.subviews.first { $0 is TabBarView }!
 let strip = bar.subviews.first { $0 is NSScrollView } as! NSScrollView
-let control = descendants(bar).compactMap { $0 as? NSButton }.first { $0.toolTip == "Collapse sidebar" }!
+let sidebarPane = controller.window!.contentView!.subviews.first { $0 is FolderSidebar }!
+let control = descendants(sidebarPane).compactMap { $0 as? NSButton }.first { $0.toolTip == "Collapse sidebar" }!
 let tab = descendants(strip).first { String(describing: type(of: $0)) == "TabItemView" }!
 check("sidebar controls align to tab centers", abs(control.convert(control.bounds, to: bar).midY - tab.convert(tab.bounds, to: bar).midY) < 0.5)
 check("tab viewport reaches window edge", abs(strip.frame.maxX - bar.bounds.width) < 0.5)

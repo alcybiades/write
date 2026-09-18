@@ -158,7 +158,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             guard let self else { return }
             self.sidebarCollapsed.toggle(); self.updateSidebar(); self.app?.sessionChanged()
         }
-        tabBar.onMediaMode = { [weak self] media in
+        sidebar.onToggleSidebar = { [weak self] in
+            guard let self else { return }
+            self.sidebarCollapsed.toggle(); self.updateSidebar(); self.app?.sessionChanged()
+        }
+        sidebar.onMediaMode = { [weak self] media in
             guard let self else { return }
             self.mediaMode = media; self.sidebar.mediaMode = media; self.updateSidebar(); self.refreshChrome()
         }
@@ -209,7 +213,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             scrollView.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             sidebar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            sidebar.topAnchor.constraint(equalTo: tabBar.bottomAnchor), sidebar.bottomAnchor.constraint(equalTo: container.bottomAnchor), sidebarWidthConstraint,
+            sidebar.topAnchor.constraint(equalTo: container.topAnchor), sidebar.bottomAnchor.constraint(equalTo: container.bottomAnchor), sidebarWidthConstraint,
             divider.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -3), divider.widthAnchor.constraint(equalToConstant: 6),
             divider.topAnchor.constraint(equalTo: sidebar.topAnchor), divider.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
@@ -561,7 +565,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         sidebarWidthConstraint?.constant = width
         sidebar.isHidden = !visible || sidebarCollapsed
         divider.isHidden = !visible || sidebarCollapsed
-        tabBar.configureSidebar(visible: visible, collapsed: sidebarCollapsed, width: width, mediaMode: mediaMode)
+        tabBar.configureSidebar(visible: visible, collapsed: sidebarCollapsed, width: width)
     }
 
     func restoreWorkspace(root: URL, collapsed: Bool, width: CGFloat, media: Bool) {
