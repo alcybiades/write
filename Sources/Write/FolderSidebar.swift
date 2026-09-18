@@ -59,7 +59,8 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         filesButton.frame = NSRect(x: 55, y: rowY, width: 30, height: 31)
         mediaButton.frame = NSRect(x: 93, y: rowY, width: 30, height: 31)
         let controlsHeight = TabBarView.cornerPadding + 31 + 8
-        scroll.frame = bounds.width < 12 ? .zero : NSRect(x: 6, y: 8, width: bounds.width - 12, height: max(0, bounds.height - controlsHeight - 8))
+        // Extra trailing inset keeps rows clear of the resize divider.
+        scroll.frame = bounds.width < 16 ? .zero : NSRect(x: 6, y: 8, width: bounds.width - 16, height: max(0, bounds.height - controlsHeight - 8))
     }
     func fadeInContents() {
         SidebarTransition.fadeIn([filesButton, mediaButton, scroll])
