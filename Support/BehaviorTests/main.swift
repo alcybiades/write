@@ -125,6 +125,34 @@ tv.setSelectedRange(NSRange(location: 0, length: 20))
 tv.toggleBoldMD(nil)
 check("bold trims spaces", tv.string, "  **padded selection**  ")
 
+// Inline modifiers are applied independently to the visible content of each
+// selected list item. A cross-item partial selection must not absorb either
+// list marker or unselected text at its edges.
+let partialListSelection = NSRange(location: 8, length: 12) // "beta\n- gamma"
+tv = makeTV("- alpha beta\n- gamma delta", caret: 0)
+tv.setSelectedRange(partialListSelection)
+tv.toggleBoldMD(nil)
+check("bold applies to exact partial ranges across bullets", tv.string,
+      "- alpha **beta**\n- **gamma** delta")
+
+tv = makeTV("- alpha beta\n- gamma delta", caret: 0)
+tv.setSelectedRange(partialListSelection)
+tv.toggleItalicMD(nil)
+check("italic applies to exact partial ranges across bullets", tv.string,
+      "- alpha *beta*\n- *gamma* delta")
+
+tv = makeTV("- alpha beta\n- gamma delta", caret: 0)
+tv.setSelectedRange(partialListSelection)
+tv.toggleCodeMD(nil)
+check("code applies to exact partial ranges across bullets", tv.string,
+      "- alpha `beta`\n- `gamma` delta")
+
+tv = makeTV("- one\n- two\n- three", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+tv.toggleBoldMD(nil)
+check("bold applies separately across complete bullet items", tv.string,
+      "- **one**\n- **two**\n- **three**")
+
 // Color spans: apply, swap, and remove by reapplying.
 tv = makeTV("color me", caret: 0)
 tv.setSelectedRange(NSRange(location: 0, length: 8))
@@ -135,12 +163,37 @@ check("color swap", tv.string, "<span style=\"color:#72A7FF\">color me</span>")
 tv.applyColor(hex: "72A7FF")
 check("color remove on reapply", tv.string, "color me")
 
+tv = makeTV("- one\n- two\n- three", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 19))
+tv.applyColor(hex: "FF5C5C")
+check("color applies separately across bullet items", tv.string,
+      "- <span style=\"color:#FF5C5C\">one</span>\n" +
+      "- <span style=\"color:#FF5C5C\">two</span>\n" +
+      "- <span style=\"color:#FF5C5C\">three</span>")
+tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+tv.applyColor(hex: "FF5C5C")
+check("color removes separately across bullet items", tv.string, "- one\n- two\n- three")
+
+tv = makeTV("- alpha beta\n- gamma delta", caret: 0)
+tv.setSelectedRange(partialListSelection)
+tv.applyColor(hex: "FF5C5C")
+check("color applies to exact partial ranges across bullets", tv.string,
+      "- alpha <span style=\"color:#FF5C5C\">beta</span>\n" +
+      "- <span style=\"color:#FF5C5C\">gamma</span> delta")
+
 tv = makeTV("muted text", caret: 0)
 tv.setSelectedRange(NSRange(location: 0, length: 10))
 tv.applyHalfOpacity()
 check("half opacity wrap", tv.string, "<span style=\"opacity:0.5\">muted text</span>")
 tv.applyHalfOpacity()
 check("half opacity remove on reapply", tv.string, "muted text")
+
+tv = makeTV("- alpha beta\n- gamma delta", caret: 0)
+tv.setSelectedRange(partialListSelection)
+tv.applyHalfOpacity()
+check("half opacity applies to exact partial ranges across bullets", tv.string,
+      "- alpha <span style=\"opacity:0.5\">beta</span>\n" +
+      "- <span style=\"opacity:0.5\">gamma</span> delta")
 
 tv = makeTV("<span style=\"color:#FF5C5C\">muted</span>", caret: 0)
 tv.setSelectedRange(NSRange(location: 0, length: 40))

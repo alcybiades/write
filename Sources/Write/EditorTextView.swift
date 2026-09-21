@@ -815,6 +815,7 @@ final class EditorTextView: NSTextView {
     private static let bulletMarker = try! NSRegularExpression(pattern: #"^(\s*)([-*+])[ \t]"#)
     private static let orderedMarker = try! NSRegularExpression(pattern: #"^(\s*)(\d+)([.)])[ \t]"#)
     private static let quoteMarker = try! NSRegularExpression(pattern: #"^(\s*)>[ \t]?"#)
+    private static let headingMarker = try! NSRegularExpression(pattern: #"^\s*#{1,6}[ \t]"#)
     private static let anyListMarker = try! NSRegularExpression(pattern: #"^(\s*)([-*+]|\d+[.)])[ \t]"#)
 
     override func insertNewline(_ sender: Any?) {
@@ -994,7 +995,75 @@ final class EditorTextView: NSTextView {
         applyTextStyle("opacity:0.5")
     }
 
+    /// Splits a visual selection into independently formattable paragraph
+    /// ranges. Block syntax belongs to the paragraph rather than its text,
+    /// so list, quote, and heading prefixes are deliberately excluded. The
+    /// first and last ranges retain the exact partial selection boundaries.
+    private func inlineStyleTargets(in selection: NSRange) -> [NSRange] {
+        let originalSelection = trimmedToContent(selection)
+        guard originalSelection.length > 0 else { return [] }
+        let ns = string as NSString
+        let paragraphs = ns.paragraphRange(for: originalSelection)
+        var targets: [NSRange] = []
+        var location = paragraphs.location
+        while location < NSMaxRange(paragraphs) {
+            let lineRange = ns.paragraphRange(for: NSRange(location: location, length: 0))
+            let intersection = NSIntersectionRange(originalSelection, lineRange)
+            if intersection.length > 0 {
+                let line = ns.substring(with: lineRange)
+                let local = NSRange(location: 0, length: (line as NSString).length)
+                let prefix = Self.taskMarker.firstMatch(in: line, range: local)
+                    ?? Self.bulletMarker.firstMatch(in: line, range: local)
+                    ?? Self.orderedMarker.firstMatch(in: line, range: local)
+                    ?? Self.quoteMarker.firstMatch(in: line, range: local)
+                    ?? Self.headingMarker.firstMatch(in: line, range: local)
+                let contentStart = lineRange.location + (prefix.map { NSMaxRange($0.range) } ?? 0)
+                let start = max(intersection.location, contentStart)
+                let end = NSMaxRange(intersection)
+                if end > start {
+                    let target = trimmedToContent(NSRange(location: start, length: end - start))
+                    if target.length > 0 { targets.append(target) }
+                }
+            }
+            let next = NSMaxRange(lineRange)
+            if next <= location { break }
+            location = next
+        }
+        return targets
+    }
+
+    /// Applies an inline operation to each selected paragraph from bottom to
+    /// top, keeping earlier raw ranges stable while Markdown delimiters are
+    /// inserted or removed on later lines.
+    private func applyToInlineStyleTargets(
+        selection: NSRange,
+        operation: (NSRange) -> Void
+    ) {
+        let originalSelection = trimmedToContent(selection)
+        let targets = inlineStyleTargets(in: originalSelection)
+        guard !targets.isEmpty else { return }
+
+        var totalDelta = 0
+        for target in targets.reversed() {
+            let before = (string as NSString).length
+            operation(target)
+            totalDelta += (string as NSString).length - before
+        }
+        let finalStart = targets.first!.location
+        let finalEnd = min((string as NSString).length,
+                           NSMaxRange(originalSelection) + totalDelta)
+        setSelectedRange(NSRange(location: finalStart, length: max(0, finalEnd - finalStart)))
+    }
+
     private func applyTextStyle(_ style: String) {
+        let selection = selectedRange()
+        applyToInlineStyleTargets(selection: selection) { target in
+            setSelectedRange(target)
+            applyTextStyleToSelection(style)
+        }
+    }
+
+    private func applyTextStyleToSelection(_ style: String) {
         let ns = string as NSString
         let sel = trimmedToContent(selectedRange())
         guard sel.length > 0 else { return }
@@ -1191,7 +1260,6 @@ final class EditorTextView: NSTextView {
 
     private func toggleInline(_ delimiter: String) {
         let ns = string as NSString
-        let dLen = (delimiter as NSString).length
         var sel = selectedRange()
 
         if sel.length == 0, hasPendingInlineStyle {
@@ -1224,6 +1292,21 @@ final class EditorTextView: NSTextView {
             else if delimiter == "`" { pendingCode.toggle(); pendingBold = false; pendingItalic = false }
             return
         }
+
+        let targets = inlineStyleTargets(in: sel)
+        if targets.count > 1 || targets.first != sel {
+            applyToInlineStyleTargets(selection: sel) { target in
+                toggleInline(delimiter, selection: target)
+            }
+            return
+        }
+
+        toggleInline(delimiter, selection: sel)
+    }
+
+    private func toggleInline(_ delimiter: String, selection sel: NSRange) {
+        let ns = string as NSString
+        let dLen = (delimiter as NSString).length
 
         if delimiter == "**" || delimiter == "*" {
             if toggleEmphasis(bold: delimiter == "**", selection: sel) { return }
