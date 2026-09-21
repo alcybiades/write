@@ -32,7 +32,7 @@ private final class MediaTile: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        caption.font = Theme.font(size: 10)
+        caption.font = Theme.interfaceFont(size: 10)
         caption.textColor = Theme.secondary
         caption.alignment = .center
         caption.lineBreakMode = .byTruncatingMiddle
@@ -145,7 +145,7 @@ final class FilePreview: NSView, NSCollectionViewDataSource, NSCollectionViewDel
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.scrollerStyle = .overlay
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
-        message.font = Theme.font(size: 14); message.textColor = Theme.secondary; message.alignment = .center
+        message.font = Theme.interfaceFont(size: 14); message.textColor = Theme.secondary; message.alignment = .center
         breadcrumbs.onNavigate = { [weak self] url in self?.onNavigate?(url) }
         [scroll, imageView, message, breadcrumbs].forEach(addSubview)
     }

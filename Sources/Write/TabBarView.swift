@@ -202,7 +202,7 @@ private final class NewTabButton: NSView {
 /// from the font's glyph metrics, relative to the baseline; draw(at:) puts
 /// the line box origin (baseline minus descent) at the given point.
 private func drawGlyphCentered(_ string: String, size: CGFloat, color: NSColor, in rect: NSRect) {
-    let font = Theme.font(size: size)
+    let font = Theme.interfaceFont(size: size)
     let text = NSAttributedString(string: string, attributes: [
         .font: font,
         .foregroundColor: color,
@@ -252,7 +252,7 @@ private final class TabItemView: NSView {
             ? NSColor.white.withAlphaComponent(0.08).cgColor
             : NSColor.clear.cgColor
 
-        label.font = Theme.font(size: 13.5)
+        label.font = Theme.interfaceFont(size: 13.5)
         label.textColor = active ? Theme.foreground : Theme.secondary
         label.lineBreakMode = .byTruncatingMiddle
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -382,7 +382,7 @@ private final class TabItemView: NSView {
     /// A floating pill following the cursor while dragging, like browsers.
     private func makeGhost() {
         let ghostLabel = NSTextField(labelWithString: title)
-        ghostLabel.font = Theme.font(size: 13.5)
+        ghostLabel.font = Theme.interfaceFont(size: 13.5)
         ghostLabel.textColor = Theme.foreground
         let size = ghostLabel.intrinsicContentSize
         let frame = NSRect(x: 0, y: 0, width: size.width + 24, height: size.height + 10)

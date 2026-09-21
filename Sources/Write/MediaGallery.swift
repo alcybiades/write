@@ -90,12 +90,12 @@ final class BreadcrumbBar: NSView {
             let name = path.lastPathComponent.isEmpty ? "/" : path.lastPathComponent
             if isImage && index == paths.count - 1 {
                 let label = NSTextField(labelWithString: name)
-                label.font = Theme.font(size: 12.5); label.textColor = Theme.heading
+                label.font = Theme.interfaceFont(size: 12.5); label.textColor = Theme.heading
                 append(label, size: label.fittingSize)
             } else {
                 let button = NSButton(title: name, target: self, action: #selector(navigate(_:)))
                 button.isBordered = false; button.bezelStyle = .inline
-                button.font = Theme.font(size: 12.5); button.contentTintColor = Theme.secondary
+                button.font = Theme.interfaceFont(size: 12.5); button.contentTintColor = Theme.secondary
                 // Keep scrolling headers out of AppKit's tooltip manager.
                 button.tag = index
                 button.setAccessibilityLabel("Open gallery: " + name)

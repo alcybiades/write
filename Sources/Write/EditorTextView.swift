@@ -758,7 +758,7 @@ final class EditorTextView: NSTextView {
     private func showSlashMenu(slashRange: NSRange) {
         pendingSlashRange = slashRange
         let menu = NSMenu()
-        menu.font = Theme.font(size: 13)
+        menu.font = Theme.interfaceFont(size: 13)
         for (index, command) in Self.slashCommands.enumerated() {
             guard let command else {
                 menu.addItem(.separator())
@@ -787,6 +787,30 @@ final class EditorTextView: NSTextView {
 
     // MARK: - List continuation
 
+    /// A visual caret at the first/last character of an inline span may be
+    /// represented inside its concealed opener/closer in the raw source.
+    /// Paragraph breaks belong outside every wrapper sharing that visual
+    /// edge, otherwise `*\ntext*` exposes a dangling delimiter.
+    private func moveCaretOutsideInlineBoundaryForBreak() {
+        let sel = selectedRange()
+        guard sel.length == 0 else { return }
+        rehighlight()
+        let spans = inlineSpans(around: sel.location)
+        let atStart = spans.filter { span in
+            visibleSourceRanges(in: span.content).first?.location == sel.location
+        }
+        if let location = atStart.map(\.range.location).min() {
+            setSelectedRange(NSRange(location: location, length: 0))
+            return
+        }
+        let atEnd = spans.filter { span in
+            visibleSourceRanges(in: span.content).last.map(NSMaxRange) == sel.location
+        }
+        if let location = atEnd.map({ NSMaxRange($0.range) }).max() {
+            setSelectedRange(NSRange(location: location, length: 0))
+        }
+    }
+
     private static let taskMarker = try! NSRegularExpression(pattern: #"^(\s*)([-*+])[ \t]\[[ xX]\][ \t]"#)
     private static let bulletMarker = try! NSRegularExpression(pattern: #"^(\s*)([-*+])[ \t]"#)
     private static let orderedMarker = try! NSRegularExpression(pattern: #"^(\s*)(\d+)([.)])[ \t]"#)
@@ -795,6 +819,7 @@ final class EditorTextView: NSTextView {
 
     override func insertNewline(_ sender: Any?) {
         clearPendingInlineStyle()
+        moveCaretOutsideInlineBoundaryForBreak()
         let sel = selectedRange()
         let ns = string as NSString
         guard sel.length == 0, sel.location <= ns.length else {

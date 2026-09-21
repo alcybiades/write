@@ -1,11 +1,13 @@
 import AppKit
 
-/// Minimal settings panel with the same terminal backdrop as the editor:
-/// a single font-family dropdown, applied live and persisted.
+/// Minimal settings panel with independent document and interface fonts,
+/// applied live and persisted.
 final class SettingsWindowController: NSObject {
 
     private(set) var window: NSWindow?
     private let onFontChange: () -> Void
+    private var interfaceLabels: [NSTextField] = []
+    private var popups: [NSPopUpButton] = []
 
     init(onFontChange: @escaping () -> Void) {
         self.onFontChange = onFontChange
@@ -18,7 +20,7 @@ final class SettingsWindowController: NSObject {
 
     private func build() {
         let panel = WriteWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 130),
+            contentRect: NSRect(x: 0, y: 0, width: 455, height: 185),
             styleMask: [.titled, .fullSizeContentView, .closable],
             backing: .buffered,
             defer: false
@@ -43,19 +45,46 @@ final class SettingsWindowController: NSObject {
         ])
 
         let heading = NSTextField(labelWithString: "settings")
-        heading.font = Theme.font(size: 12)
+        heading.font = Theme.interfaceFont(size: 12)
         heading.textColor = Theme.secondary
+        interfaceLabels.append(heading)
 
-        let fontLabel = NSTextField(labelWithString: "font")
-        fontLabel.font = Theme.font(size: 13)
-        fontLabel.textColor = Theme.foreground
+        let bodyRow = fontRow(label: "body font", selectedFamily: Theme.fontFamily, tag: 0)
+        let interfaceRow = fontRow(label: "interface font", selectedFamily: Theme.interfaceFontFamily, tag: 1)
+
+        let column = NSStackView(views: [heading, bodyRow, interfaceRow])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = 13
+        column.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            column.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
+            column.topAnchor.constraint(equalTo: container.topAnchor, constant: 34),
+            bodyRow.widthAnchor.constraint(equalToConstant: 405),
+            interfaceRow.widthAnchor.constraint(equalToConstant: 405),
+        ])
+
+        panel.center()
+        window = panel
+    }
+
+    private func fontRow(label title: String, selectedFamily: String, tag: Int) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = Theme.interfaceFont(size: 13)
+        label.textColor = Theme.foreground
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 105).isActive = true
+        interfaceLabels.append(label)
 
         let popup = NSPopUpButton()
         popup.isBordered = false
-        popup.font = Theme.font(size: 13)
+        popup.font = Theme.interfaceFont(size: 13)
         popup.contentTintColor = Theme.foreground
         popup.target = self
         popup.action = #selector(fontSelected(_:))
+        popup.tag = tag
         // Items are added with nil actions; without this, menu validation
         // can disable them all, making the font list unselectable.
         popup.autoenablesItems = false
@@ -73,14 +102,17 @@ final class SettingsWindowController: NSObject {
             }
             popup.menu?.addItem(item)
         }
-        popup.selectItem(withTitle: Theme.fontFamily)
+        popup.selectItem(withTitle: selectedFamily)
         if popup.selectedItem == nil { popup.selectItem(withTitle: Theme.defaultFontFamily) }
+        popups.append(popup)
 
         // A subtle pill behind the borderless popup, echoing the tab style.
         let pill = NSView()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
         pill.layer?.cornerRadius = 5
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.widthAnchor.constraint(equalToConstant: 288).isActive = true
         popup.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(popup)
         NSLayoutConstraint.activate([
@@ -90,30 +122,23 @@ final class SettingsWindowController: NSObject {
             popup.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -4),
         ])
 
-        let fontRow = NSStackView(views: [fontLabel, pill])
-        fontRow.orientation = .horizontal
-        fontRow.spacing = 12
-
-        let column = NSStackView(views: [heading, fontRow])
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = 14
-        column.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(column)
-        NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
-            column.topAnchor.constraint(equalTo: container.topAnchor, constant: 34),
-            pill.widthAnchor.constraint(equalToConstant: 280),
-        ])
-
-        panel.center()
-        window = panel
+        let row = NSStackView(views: [label, pill])
+        row.orientation = .horizontal
+        row.spacing = 12
+        return row
     }
 
     @objc private func fontSelected(_ sender: NSPopUpButton) {
         guard let family = sender.titleOfSelectedItem else { return }
-        Theme.fontFamily = family
+        if sender.tag == 0 {
+            Theme.fontFamily = family
+        } else {
+            Theme.interfaceFontFamily = family
+            interfaceLabels.enumerated().forEach { index, label in
+                label.font = Theme.interfaceFont(size: index == 0 ? 12 : 13)
+            }
+            popups.forEach { $0.font = Theme.interfaceFont(size: 13) }
+        }
         onFontChange()
     }
 }

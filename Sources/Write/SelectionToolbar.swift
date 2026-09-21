@@ -163,7 +163,7 @@ private final class ToolbarIconButton: NSView {
             ])
         } else {
             fallbackLabel.stringValue = fallback
-            fallbackLabel.font = Theme.font(size: 14)
+            fallbackLabel.font = Theme.interfaceFont(size: 14)
             fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
             addSubview(fallbackLabel)
             NSLayoutConstraint.activate([

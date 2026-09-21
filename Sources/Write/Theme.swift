@@ -86,6 +86,14 @@ enum Theme {
         set { AppState.defaults.set(newValue, forKey: "fontFamily") }
     }
 
+    /// Font for app chrome: sidebar, tabs, status, pickers, and other custom
+    /// interface labels. Existing users inherit their body choice until they
+    /// explicitly choose a separate interface family.
+    static var interfaceFontFamily: String {
+        get { AppState.defaults.string(forKey: "interfaceFontFamily") ?? fontFamily }
+        set { AppState.defaults.set(newValue, forKey: "interfaceFontFamily") }
+    }
+
     private static let fallbackFontNames = ["ClassicConsoleNeue", "JetBrainsMono-Regular", "SFMono-Regular", "Menlo"]
 
     static func font(size: CGFloat) -> NSFont {
@@ -96,6 +104,14 @@ enum Theme {
             if let font = NSFont(name: name, size: size) { return font }
         }
         return .monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    static func interfaceFont(size: CGFloat) -> NSFont {
+        if let font = NSFontManager.shared.font(withFamily: interfaceFontFamily,
+                                                traits: [], weight: 5, size: size) {
+            return font
+        }
+        return .systemFont(ofSize: size)
     }
 
     static var baseFont: NSFont { font(size: fontSize) }

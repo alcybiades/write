@@ -21,6 +21,15 @@ func check(_ name: String, _ got: String, _ want: String) {
     else { failures += 1; print("FAIL \(name)\n  got:  \(got.debugDescription)\n  want: \(want.debugDescription)") }
 }
 
+let originalBodyFamily = Theme.fontFamily
+let originalInterfaceFamily = Theme.interfaceFontFamily
+Theme.fontFamily = "Body Test Family"
+Theme.interfaceFontFamily = "Interface Test Family"
+check("body and interface font preferences are independent", Theme.fontFamily, "Body Test Family")
+check("interface font preference persists independently", Theme.interfaceFontFamily, "Interface Test Family")
+Theme.fontFamily = originalBodyFamily
+Theme.interfaceFontFamily = originalInterfaceFamily
+
 var tv = makeTV("- hello", caret: 7)
 tv.insertNewline(nil)
 check("bullet continue", tv.string, "- hello\n- ")
@@ -44,6 +53,23 @@ check("quote continue", tv.string, "> quoted\n> ")
 tv = makeTV("plain text", caret: 10)
 tv.insertNewline(nil)
 check("plain newline", tv.string, "plain text\n")
+
+tv = makeTV("*italic*", caret: 1) // visually before the first character
+tv.rehighlight()
+tv.insertNewline(nil)
+check("newline at italic start stays outside opener", tv.string, "\n*italic*")
+
+tv = makeTV("*italic*", caret: 7) // visually after the last character
+tv.rehighlight()
+tv.insertNewline(nil)
+check("newline at italic end stays outside closer", tv.string, "*italic*\n")
+
+let nestedStyledStart = "<span style=\"color:#FF8A7A\">**[3]**</span>"
+tv = makeTV(nestedStyledStart, caret: (nestedStyledStart as NSString).range(of: "[3]").location)
+tv.rehighlight()
+tv.insertNewline(nil)
+check("newline at nested styled start stays outside all openers", tv.string,
+      "\n<span style=\"color:#FF8A7A\">**[3]**</span>")
 
 tv = makeTV("make this bold", caret: 0)
 tv.setSelectedRange(NSRange(location: 5, length: 4))

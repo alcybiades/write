@@ -129,7 +129,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         }
 
         statusLabel = NSTextField(labelWithString: "")
-        statusLabel.font = Theme.font(size: 11)
+        statusLabel.font = Theme.interfaceFont(size: 11)
         statusLabel.textColor = Theme.secondary
         statusLabel.alignment = .right
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -333,7 +333,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
 
     func applyFontChange() {
         textView.rehighlight()
-        statusLabel.font = Theme.font(size: 11)
+        statusLabel.font = Theme.interfaceFont(size: 11)
+        sidebar.refreshFont()
         updateInsets()
         refreshChrome()
     }

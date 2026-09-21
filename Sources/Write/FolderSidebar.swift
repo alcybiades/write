@@ -95,6 +95,10 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         updateRootActions()
     }
     @objc func refresh() { if let url = root?.url { setRoot(url); onRefresh?() } }
+    func refreshFont() {
+        outline.reloadData()
+        updateRootActions()
+    }
     var creationDirectory: URL? {
         guard let root else { return nil }
         guard let node = outline.item(atRow: outline.selectedRow) as? FileNode else { return root.url }
@@ -193,7 +197,7 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         icon.image = NSImage(systemSymbolName: node.isDirectory ? "folder" : (FileKind.classify(node.url) == .image ? "photo" : "doc"), accessibilityDescription: nil)
         icon.contentTintColor = node.isDirectory ? Theme.heading : Theme.secondary
         let label = NSTextField(labelWithString: node.url.lastPathComponent)
-        label.font = Theme.font(size: 13.5)
+        label.font = Theme.interfaceFont(size: 13.5)
         label.textColor = Theme.foreground.withAlphaComponent(0.85)
         label.lineBreakMode = .byTruncatingMiddle
         cell.addSubview(icon); cell.addSubview(label)
