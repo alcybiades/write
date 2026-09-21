@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 
 extension NSAttributedString.Key {
     static let fileReference = NSAttributedString.Key("WriteFileReference")
@@ -51,7 +52,7 @@ final class MarkdownHighlighter {
     private let heading = MarkdownHighlighter.regex(#"^(#{1,6})[ \t](.*)$"#)
     static let fence = MarkdownHighlighter.regex(#"^\s*(```|~~~)"#)
     private let task = MarkdownHighlighter.regex(#"^\s*[-*+][ \t]\[[ xX]\][ \t]"#)
-    private let bullet = MarkdownHighlighter.regex(#"^\s*[-*+][ \t]"#)
+    private let bullet = MarkdownHighlighter.regex(#"^(\s*)([-*+])[ \t]"#)
     private let ordered = MarkdownHighlighter.regex(#"^\s*\d+[.)][ \t]"#)
     private let quote = MarkdownHighlighter.regex(#"^\s*(>[ \t]?)+"#)
     private let rule = MarkdownHighlighter.regex(#"^\s*([-*_])(\s*\1){2,}\s*$"#)
@@ -117,9 +118,26 @@ final class MarkdownHighlighter {
         style.paragraphSpacingBefore = spacingBefore
         let baseIndent = Theme.fontSize
         style.firstLineHeadIndent = baseIndent
+        var displayedPrefix = prefix
+        if let marker = displayedPrefix.firstIndex(where: { !$0.isWhitespace }),
+           "-*+".contains(displayedPrefix[marker]) {
+            displayedPrefix.replaceSubrange(marker...marker, with: "•")
+        }
         style.headIndent = baseIndent + markerKern
-            + (prefix as NSString).size(withAttributes: [.font: Theme.baseFont]).width
+            + (displayedPrefix as NSString).size(withAttributes: [.font: Theme.baseFont]).width
         return style
+    }
+
+    /// Draws an unordered Markdown marker as a typographic bullet without
+    /// changing the backing source character.
+    private func substituteBulletGlyph(_ ts: NSTextStorage, markerRange: NSRange) {
+        var character: UniChar = 0x2022
+        var glyph: CGGlyph = 0
+        let font = Theme.baseFont
+        guard CTFontGetGlyphsForCharacters(font, &character, &glyph, 1), glyph != 0,
+              let info = NSGlyphInfo(cgGlyph: glyph, for: font,
+                                     baseString: (ts.string as NSString).substring(with: markerRange)) else { return }
+        ts.addAttribute(.glyphInfo, value: info, range: markerRange)
     }
 
     /// Widens the marker's trailing space via kerning.
@@ -240,6 +258,7 @@ final class MarkdownHighlighter {
         } else if let m = bullet.firstMatch(in: line, range: localRange) {
             if let color = Theme.listMarker { ts.addAttribute(.foregroundColor, value: color, range: global(m.range)) }
             ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range), spacingBefore: listSpacing), range: lineRange)
+            substituteBulletGlyph(ts, markerRange: global(m.range(at: 2)))
             widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = ordered.firstMatch(in: line, range: localRange) {
             if let color = Theme.listMarker { ts.addAttribute(.foregroundColor, value: color, range: global(m.range)) }

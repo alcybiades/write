@@ -81,6 +81,9 @@ let firstListStyle = tv.textStorage?.attribute(.paragraphStyle, at: 2, effective
 let secondListStyle = tv.textStorage?.attribute(.paragraphStyle, at: 8, effectiveRange: nil) as? NSParagraphStyle
 checkTrue("first list item has no leading list gap", (firstListStyle?.paragraphSpacingBefore ?? 0) == 0)
 checkTrue("adjacent list items have slight spacing", (secondListStyle?.paragraphSpacingBefore ?? 0) > 0)
+check("bullet glyph substitution preserves markdown source", tv.string, "- one\n- two")
+checkTrue("unordered marker renders with a bullet glyph",
+          tv.textStorage?.attribute(.glyphInfo, at: 0, effectiveRange: nil) is NSGlyphInfo)
 
 tv = makeTV("*italic*", caret: 1) // visually before the first character
 tv.rehighlight()
