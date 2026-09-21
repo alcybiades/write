@@ -15,6 +15,14 @@ extension NSColor {
             alpha: alpha
         )
     }
+
+    var rgbHexString: String? {
+        guard let color = usingColorSpace(.sRGB) else { return nil }
+        let red = Int((color.redComponent * 255).rounded())
+        let green = Int((color.greenComponent * 255).rounded())
+        let blue = Int((color.blueComponent * 255).rounded())
+        return String(format: "%02X%02X%02X", red, green, blue)
+    }
 }
 
 /// "Neon Noir" — mirrors ~/.wezterm.lua.
@@ -23,17 +31,47 @@ enum Theme {
     static let backgroundOpacity: CGFloat = 0.60
 
     static let foreground = NSColor(hex: 0x63D0FF)
-    static let bold = NSColor(hex: 0xFFFFFF)
-    static let heading = NSColor(hex: 0xA4BEEF)
-    static let italic = NSColor(hex: 0xD7E0FF)
+    private static func semanticColor(_ key: String, fallback: UInt32) -> NSColor {
+        AppState.defaults.string(forKey: key).flatMap(NSColor.init(hexString:))
+            ?? NSColor(hex: fallback)
+    }
+
+    private static func setSemanticColor(_ color: NSColor, key: String) {
+        if let hex = color.rgbHexString { AppState.defaults.set(hex, forKey: key) }
+    }
+
+    static var bold: NSColor {
+        get { semanticColor("boldColor", fallback: 0xFFFFFF) }
+        set { setSemanticColor(newValue, key: "boldColor") }
+    }
+    static var heading: NSColor {
+        get { semanticColor("headingColor", fallback: 0xA4BEEF) }
+        set { setSemanticColor(newValue, key: "headingColor") }
+    }
+    static var italic: NSColor {
+        get { semanticColor("italicColor", fallback: 0xD7E0FF) }
+        set { setSemanticColor(newValue, key: "italicColor") }
+    }
     static let code = NSColor(hex: 0x55E6A5)
-    static let codeAmber = NSColor(hex: 0xFFB86C)
+    static var codeAmber: NSColor {
+        get { semanticColor("inlineCodeColor", fallback: 0xFFB86C) }
+        set { setSemanticColor(newValue, key: "inlineCodeColor") }
+    }
     static let dim = NSColor(hex: 0x526078)
     // Translucent secondary chrome; separate from subdued Markdown syntax.
     static let secondary = NSColor.white.withAlphaComponent(0.5)
-    static let listMarker = NSColor(hex: 0xFFD166)
-    static let quote = NSColor(hex: 0xBF8EE8)
-    static let link = NSColor(hex: 0x7DD3FC)
+    static var listMarker: NSColor {
+        get { semanticColor("listMarkerColor", fallback: 0xFFD166) }
+        set { setSemanticColor(newValue, key: "listMarkerColor") }
+    }
+    static var quote: NSColor {
+        get { semanticColor("quoteColor", fallback: 0xBF8EE8) }
+        set { setSemanticColor(newValue, key: "quoteColor") }
+    }
+    static var link: NSColor {
+        get { semanticColor("linkColor", fallback: 0x7DD3FC) }
+        set { setSemanticColor(newValue, key: "linkColor") }
+    }
     static let cursor = NSColor(hex: 0x727272)
     static let selection = NSColor(hex: 0x334A7D)
     static let sidebarSelection = NSColor(hex: 0x7186A5, alpha: 0.28)
@@ -164,10 +202,12 @@ enum Theme {
         return result
     }
 
-    static func paragraphStyle(spacingBefore: CGFloat = 0) -> NSParagraphStyle {
+    static func paragraphStyle(spacingBefore: CGFloat = 0,
+                               spacingAfter: CGFloat = 0) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = lineHeightMultiple
         style.paragraphSpacingBefore = spacingBefore
+        style.paragraphSpacing = spacingAfter
         return style
     }
 

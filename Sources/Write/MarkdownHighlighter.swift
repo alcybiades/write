@@ -111,9 +111,10 @@ final class MarkdownHighlighter {
     /// List/quote lines get a base indent, and their wrapped lines align
     /// with the text after the marker (a hanging indent, including the
     /// widened marker gap).
-    private func hangingIndentStyle(prefix: String) -> NSParagraphStyle {
+    private func hangingIndentStyle(prefix: String, spacingBefore: CGFloat = 0) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = Theme.lineHeightMultiple
+        style.paragraphSpacingBefore = spacingBefore
         let baseIndent = Theme.fontSize
         style.firstLineHeadIndent = baseIndent
         style.headIndent = baseIndent + markerKern
@@ -197,6 +198,16 @@ final class MarkdownHighlighter {
         }
 
         // Block-level rules.
+        let previousLineIsList: Bool = {
+            guard lineRange.location > 0 else { return false }
+            let previousRange = text.lineRange(for: NSRange(location: lineRange.location - 1, length: 0))
+            let previous = text.substring(with: previousRange)
+            let range = NSRange(location: 0, length: (previous as NSString).length)
+            return task.firstMatch(in: previous, range: range) != nil
+                || bullet.firstMatch(in: previous, range: range) != nil
+                || ordered.firstMatch(in: previous, range: range) != nil
+        }()
+        let listSpacing = previousLineIsList ? Theme.fontSize * 0.18 : 0
         if let m = heading.firstMatch(in: line, range: localRange) {
             let level = m.range(at: 1).length
             let size = (Theme.fontSize * headingScale(level)).rounded()
@@ -204,7 +215,9 @@ final class MarkdownHighlighter {
                 .font: Theme.font(size: size),
                 .foregroundColor: Theme.heading,
                 .strokeWidth: -3.0,
-                .paragraphStyle: Theme.paragraphStyle(spacingBefore: Theme.fontSize * 0.4),
+                .paragraphStyle: Theme.paragraphStyle(
+                    spacingBefore: Theme.fontSize * 0.42,
+                    spacingAfter: Theme.fontSize * 0.20),
             ], range: lineRange)
             let prefix = NSRange(location: lineRange.location, length: level + 1)
             ts.addAttributes([.foregroundColor: Theme.dim, .strokeWidth: 0.0], range: prefix)
@@ -221,15 +234,15 @@ final class MarkdownHighlighter {
             widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = task.firstMatch(in: line, range: localRange) {
             ts.addAttribute(.foregroundColor, value: Theme.listMarker, range: global(m.range))
-            ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range), spacingBefore: listSpacing), range: lineRange)
             widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = bullet.firstMatch(in: line, range: localRange) {
             ts.addAttribute(.foregroundColor, value: Theme.listMarker, range: global(m.range))
-            ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range), spacingBefore: listSpacing), range: lineRange)
             widenMarkerGap(ts, markerRange: global(m.range))
         } else if let m = ordered.firstMatch(in: line, range: localRange) {
             ts.addAttribute(.foregroundColor, value: Theme.listMarker, range: global(m.range))
-            ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range)), range: lineRange)
+            ts.addAttribute(.paragraphStyle, value: hangingIndentStyle(prefix: (line as NSString).substring(with: m.range), spacingBefore: listSpacing), range: lineRange)
             widenMarkerGap(ts, markerRange: global(m.range))
         }
 
@@ -298,7 +311,7 @@ final class MarkdownHighlighter {
             let open = NSRange(location: r.location, length: delimiterLength)
             let close = NSRange(location: NSMaxRange(r) - delimiterLength, length: delimiterLength)
             // Real italic face when the family has one; slant otherwise.
-            // Color is left alone so italics inherit their surroundings.
+            ts.addAttribute(.foregroundColor, value: Theme.italic, range: r)
             let (italicFont, synthetic) = Theme.italicFont(size: Theme.fontSize)
             if synthetic {
                 ts.addAttribute(.obliqueness, value: 0.18, range: r)

@@ -6,8 +6,49 @@ final class SettingsWindowController: NSObject {
 
     private(set) var window: NSWindow?
     private let onFontChange: () -> Void
-    private var interfaceLabels: [NSTextField] = []
+    private var interfaceLabels: [(label: NSTextField, size: CGFloat)] = []
     private var popups: [NSPopUpButton] = []
+
+    private enum ColorRole: Int, CaseIterable {
+        case bold, heading, italic, listMarker, quote, inlineCode, link
+
+        var title: String {
+            switch self {
+            case .bold: return "bold text"
+            case .heading: return "headings"
+            case .italic: return "italic text"
+            case .listMarker: return "list markers"
+            case .quote: return "quotes"
+            case .inlineCode: return "inline code"
+            case .link: return "links"
+            }
+        }
+
+        var color: NSColor {
+            get {
+                switch self {
+                case .bold: return Theme.bold
+                case .heading: return Theme.heading
+                case .italic: return Theme.italic
+                case .listMarker: return Theme.listMarker
+                case .quote: return Theme.quote
+                case .inlineCode: return Theme.codeAmber
+                case .link: return Theme.link
+                }
+            }
+            set {
+                switch self {
+                case .bold: Theme.bold = newValue
+                case .heading: Theme.heading = newValue
+                case .italic: Theme.italic = newValue
+                case .listMarker: Theme.listMarker = newValue
+                case .quote: Theme.quote = newValue
+                case .inlineCode: Theme.codeAmber = newValue
+                case .link: Theme.link = newValue
+                }
+            }
+        }
+    }
 
     init(onFontChange: @escaping () -> Void) {
         self.onFontChange = onFontChange
@@ -20,7 +61,7 @@ final class SettingsWindowController: NSObject {
 
     private func build() {
         let panel = WriteWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 455, height: 185),
+            contentRect: NSRect(x: 0, y: 0, width: 455, height: 430),
             styleMask: [.titled, .fullSizeContentView, .closable],
             backing: .buffered,
             defer: false
@@ -47,12 +88,23 @@ final class SettingsWindowController: NSObject {
         let heading = NSTextField(labelWithString: "settings")
         heading.font = Theme.interfaceFont(size: 12)
         heading.textColor = Theme.secondary
-        interfaceLabels.append(heading)
+        interfaceLabels.append((heading, 12))
 
         let bodyRow = fontRow(label: "body font", selectedFamily: Theme.fontFamily, tag: 0)
         let interfaceRow = fontRow(label: "interface font", selectedFamily: Theme.interfaceFontFamily, tag: 1)
 
-        let column = NSStackView(views: [heading, bodyRow, interfaceRow])
+        let colorsHeading = NSTextField(labelWithString: "semantic colors")
+        colorsHeading.font = Theme.interfaceFont(size: 12)
+        colorsHeading.textColor = Theme.secondary
+        interfaceLabels.append((colorsHeading, 12))
+
+        let colorRows = ColorRole.allCases.map(colorRow)
+        let colors = NSStackView(views: colorRows)
+        colors.orientation = .vertical
+        colors.alignment = .leading
+        colors.spacing = 7
+
+        let column = NSStackView(views: [heading, bodyRow, interfaceRow, colorsHeading, colors])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 13
@@ -64,6 +116,7 @@ final class SettingsWindowController: NSObject {
             column.topAnchor.constraint(equalTo: container.topAnchor, constant: 34),
             bodyRow.widthAnchor.constraint(equalToConstant: 405),
             interfaceRow.widthAnchor.constraint(equalToConstant: 405),
+            colors.widthAnchor.constraint(equalToConstant: 405),
         ])
 
         panel.center()
@@ -76,7 +129,7 @@ final class SettingsWindowController: NSObject {
         label.textColor = Theme.foreground
         label.translatesAutoresizingMaskIntoConstraints = false
         label.widthAnchor.constraint(equalToConstant: 105).isActive = true
-        interfaceLabels.append(label)
+        interfaceLabels.append((label, 13))
 
         let popup = NSPopUpButton()
         popup.isBordered = false
@@ -128,17 +181,50 @@ final class SettingsWindowController: NSObject {
         return row
     }
 
+    private func colorRow(_ role: ColorRole) -> NSView {
+        let label = NSTextField(labelWithString: role.title)
+        label.font = Theme.interfaceFont(size: 13)
+        label.textColor = Theme.foreground
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 105).isActive = true
+        interfaceLabels.append((label, 13))
+
+        let well = NSColorWell()
+        well.color = role.color
+        well.tag = role.rawValue
+        well.target = self
+        well.action = #selector(colorSelected(_:))
+        well.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            well.widthAnchor.constraint(equalToConstant: 48),
+            well.heightAnchor.constraint(equalToConstant: 24),
+        ])
+
+        let row = NSStackView(views: [label, well])
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: 405).isActive = true
+        return row
+    }
+
     @objc private func fontSelected(_ sender: NSPopUpButton) {
         guard let family = sender.titleOfSelectedItem else { return }
         if sender.tag == 0 {
             Theme.fontFamily = family
         } else {
             Theme.interfaceFontFamily = family
-            interfaceLabels.enumerated().forEach { index, label in
-                label.font = Theme.interfaceFont(size: index == 0 ? 12 : 13)
+            interfaceLabels.forEach { entry in
+                entry.label.font = Theme.interfaceFont(size: entry.size)
             }
             popups.forEach { $0.font = Theme.interfaceFont(size: 13) }
         }
+        onFontChange()
+    }
+
+    @objc private func colorSelected(_ sender: NSColorWell) {
+        guard var role = ColorRole(rawValue: sender.tag) else { return }
+        role.color = sender.color
         onFontChange()
     }
 }

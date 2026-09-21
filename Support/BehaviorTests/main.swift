@@ -20,6 +20,10 @@ func check(_ name: String, _ got: String, _ want: String) {
     if got == want { print("PASS \(name)") }
     else { failures += 1; print("FAIL \(name)\n  got:  \(got.debugDescription)\n  want: \(want.debugDescription)") }
 }
+func checkTrue(_ name: String, _ condition: Bool) {
+    if condition { print("PASS \(name)") }
+    else { failures += 1; print("FAIL \(name)") }
+}
 
 let originalBodyFamily = Theme.fontFamily
 let originalInterfaceFamily = Theme.interfaceFontFamily
@@ -29,6 +33,15 @@ check("body and interface font preferences are independent", Theme.fontFamily, "
 check("interface font preference persists independently", Theme.interfaceFontFamily, "Interface Test Family")
 Theme.fontFamily = originalBodyFamily
 Theme.interfaceFontFamily = originalInterfaceFamily
+
+let originalBoldColor = Theme.bold
+let originalItalicColor = Theme.italic
+Theme.bold = NSColor(hex: 0x123456)
+Theme.italic = NSColor(hex: 0x654321)
+check("bold semantic color persists", Theme.bold.rgbHexString ?? "", "123456")
+check("italic semantic color persists", Theme.italic.rgbHexString ?? "", "654321")
+Theme.bold = originalBoldColor
+Theme.italic = originalItalicColor
 
 var tv = makeTV("- hello", caret: 7)
 tv.insertNewline(nil)
@@ -53,6 +66,19 @@ check("quote continue", tv.string, "> quoted\n> ")
 tv = makeTV("plain text", caret: 10)
 tv.insertNewline(nil)
 check("plain newline", tv.string, "plain text\n")
+
+tv = makeTV("# Heading\nBody", caret: 0)
+tv.rehighlight()
+let headingStyle = tv.textStorage?.attribute(.paragraphStyle, at: 2, effectiveRange: nil) as? NSParagraphStyle
+checkTrue("heading has space before", (headingStyle?.paragraphSpacingBefore ?? 0) > 0)
+checkTrue("heading has space after", (headingStyle?.paragraphSpacing ?? 0) > 0)
+
+tv = makeTV("- one\n- two", caret: 0)
+tv.rehighlight()
+let firstListStyle = tv.textStorage?.attribute(.paragraphStyle, at: 2, effectiveRange: nil) as? NSParagraphStyle
+let secondListStyle = tv.textStorage?.attribute(.paragraphStyle, at: 8, effectiveRange: nil) as? NSParagraphStyle
+checkTrue("first list item has no leading list gap", (firstListStyle?.paragraphSpacingBefore ?? 0) == 0)
+checkTrue("adjacent list items have slight spacing", (secondListStyle?.paragraphSpacingBefore ?? 0) > 0)
 
 tv = makeTV("*italic*", caret: 1) // visually before the first character
 tv.rehighlight()
