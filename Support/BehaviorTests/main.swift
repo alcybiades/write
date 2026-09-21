@@ -78,6 +78,18 @@ check("color swap", tv.string, "<span style=\"color:#72A7FF\">color me</span>")
 tv.applyColor(hex: "72A7FF")
 check("color remove on reapply", tv.string, "color me")
 
+tv = makeTV("muted text", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 10))
+tv.applyHalfOpacity()
+check("half opacity wrap", tv.string, "<span style=\"opacity:0.5\">muted text</span>")
+tv.applyHalfOpacity()
+check("half opacity remove on reapply", tv.string, "muted text")
+
+tv = makeTV("<span style=\"color:#FF5C5C\">muted</span>", caret: 0)
+tv.setSelectedRange(NSRange(location: 0, length: 40))
+tv.applyHalfOpacity()
+check("half opacity replaces color", tv.string, "<span style=\"opacity:0.5\">muted</span>")
+
 // A block with mixed colors is repainted, not wrapped around its existing
 // spans — wrapping would nest tags the highlighter can't read.
 tv = makeTV("hello <span style=\"color:#FF5C5C\">red</span> world", caret: 0)
@@ -241,6 +253,17 @@ check("continue bold mid-line", tv.string, "**boldx** tail")
 tv = makeTV("**bold**", caret: 8)
 type(tv, " ")
 check("space stays outside span", tv.string, "**bold** ")
+type(tv, "x")
+check("bold resumes after space without exposed markers", tv.string, "**bold** **x**")
+
+// The visual end can also be represented immediately before the concealed
+// closer (as happens after typing/clicking). Space must still go outside it.
+tv = makeTV("**bold**", caret: 6)
+tv.rehighlight()
+type(tv, " ")
+check("space at bold content end stays outside", tv.string, "**bold** ")
+type(tv, "x")
+check("bold mode survives content-end space", tv.string, "**bold** **x**")
 
 tv = makeTV("**bold** and", caret: 12)
 type(tv, "x")
@@ -257,6 +280,42 @@ check("typing before span unaffected", tv.string, "x**bold**")
 tv = makeTV("***word***", caret: 10)
 type(tv, "x")
 check("continue combined span at end", tv.string, "***wordx***")
+
+// Formatting an empty caret is pending editor state, never a visible empty
+// Markdown skeleton. Layers compose before the first character is typed.
+tv = makeTV("", caret: 0)
+tv.toggleBoldMD(nil)
+check("empty bold has no skeleton", tv.string, "")
+tv.toggleItalicMD(nil)
+check("empty italic layers without skeleton", tv.string, "")
+type(tv, "x")
+check("pending bold italic materializes balanced", tv.string, "***x***")
+type(tv, "y")
+check("pending style continues within span", tv.string, "***xy***")
+type(tv, " ")
+check("pending style space remains valid", tv.string, "***xy*** ")
+type(tv, "z")
+check("pending style resumes after space", tv.string, "***xy*** ***z***")
+tv.toggleItalicMD(nil)
+type(tv, "q")
+check("pending layer toggles off without rewriting prior text", tv.string, "***xy*** ***z*****q**")
+
+tv = makeTV("start ", caret: 6)
+tv.toggleItalicMD(nil)
+check("italic after space has no skeleton", tv.string, "start ")
+type(tv, "word")
+check("italic after space wraps first input", tv.string, "start *word*")
+
+// One arrow press crosses a concealed closing delimiter and advances to the
+// next visible caret stop; there is no raw-marker-only stop.
+tv = makeTV("**a** b", caret: 3)
+tv.rehighlight()
+tv.moveRight(nil)
+check("right arrow skips closer", "\(tv.selectedRange().location)", "6")
+tv = makeTV("**a** b", caret: 5)
+tv.rehighlight()
+tv.moveLeft(nil)
+check("left arrow skips closer", "\(tv.selectedRange().location)", "2")
 
 // Spans are atomic: typing at a span's visual start lands before it.
 tv = makeTV("see `code` here", caret: 5)  // content start, after hidden `
@@ -295,12 +354,13 @@ tv.rehighlight()
 tv.deleteForward(nil)
 check("fwd delete sole code char removes span", tv.string, "a  b")
 
-// Selections touching delimiters swallow the whole span on delete.
+// Selection endpoints are projected onto rendered characters. Accidentally
+// including a concealed delimiter never expands a partial edit to the span.
 tv = makeTV("a `code` b", caret: 0)
 tv.rehighlight()
 tv.setSelectedRange(NSRange(location: 2, length: 3))  // "`co"
 tv.deleteBackward(nil)
-check("delete across opening marker takes span", tv.string, "a  b")
+check("delete across opening marker edits visible text only", tv.string, "a `de` b")
 
 tv = makeTV("a `code` b", caret: 0)
 tv.rehighlight()
@@ -314,6 +374,38 @@ tv.rehighlight()
 tv.setSelectedRange(NSRange(location: 3, length: 4))
 type(tv, "npm")
 check("typing over content keeps chip", tv.string, "a `npm` b")
+
+// Regression: a visually partial selection in this real-world combination
+// used to swallow the entire bold heading when its raw range touched `**`.
+let styledHeading = "<span style=\"color:#FF8A7A\">**[3]**</span> **Great IP and storytelling is still fundamental to great films and franchises** -"
+tv = makeTV(styledHeading, caret: 0)
+tv.rehighlight()
+let headingNS = styledHeading as NSString
+let partialStart = headingNS.range(of: "**Great IP")
+tv.setSelectedRange(partialStart) // includes hidden opener, but only two words
+tv.deleteBackward(nil)
+check("partial bold delete preserves unselected heading", tv.string,
+      "<span style=\"color:#FF8A7A\">**[3]**</span>  **and storytelling is still fundamental to great films and franchises** -")
+
+tv = makeTV(styledHeading, caret: 0)
+tv.rehighlight()
+let tail = headingNS.range(of: "films and franchises**")
+tv.setSelectedRange(tail) // includes hidden closer
+type(tv, "stories")
+check("partial bold replacement preserves rest and delimiters", tv.string,
+      "<span style=\"color:#FF8A7A\">**[3]**</span> **Great IP and storytelling is still fundamental to great stories** -")
+
+tv = makeTV("<span style=\"color:#FF8A7A\">**[3]**</span>", caret: 0)
+tv.rehighlight()
+tv.setSelectedRange((tv.string as NSString).range(of: "[3]"))
+tv.deleteBackward(nil)
+check("deleting nested visible content removes all empty wrappers", tv.string, "")
+
+tv = makeTV("**alpha** and *omega*", caret: 0)
+tv.rehighlight()
+tv.setSelectedRange(NSRange(location: 3, length: 13)) // "lpha** and *om"
+tv.deleteBackward(nil)
+check("cross-style delete preserves balanced syntax", tv.string, "**a***mega*")
 
 // Code block toggle: wrap paragraphs, unwrap from inside or from selection.
 tv = makeTV("one\ntwo\nthree\n", caret: 5)

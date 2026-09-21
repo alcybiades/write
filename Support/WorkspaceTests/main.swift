@@ -289,9 +289,8 @@ check("full viewer loads original separately", originalImageView.image != nil)
 controller.switchTab(to: 0)
 check("leaving viewer releases original pixels", originalImageView.image == nil && preview.sections.isEmpty)
 check("leaving gallery cancels pending thumbnails", ImageLoader.shared.pendingThumbnailCount == 0)
-// Sidebar clicks navigate in place: focus a tab that already shows the file,
-// otherwise replace the current tab's content (flushing its edits first);
-// only untitled buffers holding text keep their tab.
+// Sidebar clicks navigate in a tab belonging to the displayed workspace.
+controller.restoreWorkspace(root: root, collapsed: false, width: 220, media: false)
 let freshA = root.appendingPathComponent("Notes/FreshA.md")
 let freshB = root.appendingPathComponent("Notes/FreshB.md")
 try "# A\n".write(to: freshA, atomically: true, encoding: .utf8)
@@ -311,8 +310,66 @@ controller.textView.insertText("scratch", replacementRange: NSRange(location: 0,
 let untitledTabs = controller.documents.count
 controller.openInCurrentTab(freshB)
 check("sidebar open keeps untitled buffers in their tab",
-      controller.documents.count == untitledTabs + 1 && controller.currentDocument.url == freshB
+      controller.documents.count == untitledTabs && controller.currentDocument.url == freshB
       && controller.documents.contains { $0.url == nil && $0.storage.string == "scratch" })
+
+// Activation order, rather than tab position, determines which workspace tab
+// to reuse while an unrelated document is selected.
+let outsideRoot = fixture.appendingPathComponent("Studio-Archive")
+try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+let outsideURL = outsideRoot.appendingPathComponent("Outside.md")
+try "Outside note".write(to: outsideURL, atomically: true, encoding: .utf8)
+let outsideDocument = Document(url: outsideURL, content: "Outside note")
+let navigation = EditorWindowController(documents: [outsideDocument,
+    Document(url: freshA, content: "# A\n"), Document(url: freshB, content: "# B\n")], app: nil)
+navigation.restoreWorkspace(root: root, collapsed: false, width: 220, media: false)
+navigation.switchTab(to: 2)
+navigation.switchTab(to: 1)
+navigation.switchTab(to: 0)
+navigation.textView.insertText("Edited ", replacementRange: NSRange(location: 0, length: 0))
+navigation.openInCurrentTab(target)
+check("sidebar reuses most recently active associated tab, not last tab",
+      navigation.current == 1 && navigation.documents.count == 3
+      && navigation.currentDocument.url == target && navigation.documents[2].url == freshB)
+check("sidebar preserves unrelated file and saves its pending edits",
+      navigation.documents[0] === outsideDocument && outsideDocument.storage.string == "Edited Outside note"
+      && (try? String(contentsOf: outsideURL, encoding: .utf8)) == "Edited Outside note")
+navigation.switchTab(to: 0)
+navigation.openInCurrentTab(freshB)
+check("already open destination takes priority over most recent workspace tab",
+      navigation.current == 2 && navigation.documents.count == 3 && navigation.documents[1].url == target)
+navigation.switchTab(to: 0)
+navigation.closeTab(at: 2)
+navigation.openInCurrentTab(freshA)
+check("closed most recent tab falls back to previous associated tab",
+      navigation.current == 1 && navigation.documents.count == 2 && navigation.currentDocument.url == freshA)
+_ = navigation.removeDocument(at: 1)
+navigation.openInCurrentTab(freshB)
+check("no associated tab creates one without replacing similarly named sibling folder file",
+      navigation.documents.count == 2 && navigation.documents[0] === outsideDocument
+      && navigation.currentDocument.url == freshB)
+navigation.newTab(nil)
+let blankDocument = navigation.currentDocument
+navigation.openInCurrentTab(imageURL)
+check("blank unrelated tab stays open while associated tab shows an image",
+      navigation.documents.count == 3 && navigation.documents[2] === blankDocument
+      && navigation.current == 1 && navigation.currentDocument.kind == .image)
+navigation.restoreWorkspace(root: root, collapsed: false, width: 220, media: true)
+navigation.switchTab(to: 0)
+navigation.openInCurrentTab(root)
+check("media folder navigation reuses associated tab and preserves sidebar root",
+      navigation.current == 1 && navigation.currentDocument.url?.path == root.path
+      && navigation.documents[0] === outsideDocument && navigation.workspace?.root.path == root.path)
+navigation.restoreWorkspace(root: outsideRoot, collapsed: false, width: 220, media: false)
+navigation.openInCurrentTab(outsideURL)
+navigation.switchTab(to: 1)
+let anotherOutside = outsideRoot.appendingPathComponent("Another.md")
+try "Another note".write(to: anotherOutside, atomically: true, encoding: .utf8)
+navigation.openInCurrentTab(anotherOutside)
+check("changing sidebar root re-evaluates which tabs belong to it",
+      navigation.current == 0 && navigation.currentDocument.url == anotherOutside
+      && navigation.documents[1].url?.path == root.path)
+navigation.window?.orderOut(nil)
 
 // Creation controls follow the selected directory and survive tree refreshes.
 controller.restoreWorkspace(root: root, collapsed: false, width: 220, media: false)

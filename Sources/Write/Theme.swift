@@ -64,6 +64,7 @@ enum Theme {
         ("Leaf Green", "86C56A"),
         ("Coral", "FF8A7A"),
     ]
+    static let halfOpacityText = foreground.withAlphaComponent(0.5)
     /// Prose column cap: about half a MacBook screen minus 80pt padding per
     /// side. Past this the window just grows its horizontal padding.
     static let maxTextWidth: CGFloat = 720

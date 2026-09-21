@@ -66,6 +66,34 @@ final class MarkdownHighlighter {
     static let inlineCode = MarkdownHighlighter.regex(#"`[^`\n]+`"#)
     static let linkText = MarkdownHighlighter.regex(#"\[((?:\\.|[^\]\\\n])*)\]\(([^)\n]*)\)"#)
     static let colorSpan = MarkdownHighlighter.regex(#"<span style="color:#([0-9A-Fa-f]{6})">(.+?)</span>"#)
+    static let halfOpacitySpan = MarkdownHighlighter.regex(#"<span style="opacity:0\.5">(.+?)</span>"#)
+
+    /// Regex enumeration normally skips to the end of a rejected match. An
+    /// apparent italic opener can be a star owned by a preceding bold
+    /// delimiter, so resume one character later when that happens and find
+    /// the real italic span that may follow.
+    static func validItalicMatches(in string: String, range: NSRange,
+                                   blockedByBoldMarkers blocked: [NSRange]) -> [NSTextCheckingResult] {
+        var matches: [NSTextCheckingResult] = []
+        var location = range.location
+        let end = NSMaxRange(range)
+        while location < end,
+              let match = italicText.firstMatch(in: string,
+                                                range: NSRange(location: location, length: end - location)) {
+            let delimiterLength = match.range(at: 1).length
+            let open = NSRange(location: match.range.location, length: delimiterLength)
+            let close = NSRange(location: NSMaxRange(match.range) - delimiterLength, length: delimiterLength)
+            if blocked.contains(where: {
+                NSIntersectionRange($0, open).length > 0 || NSIntersectionRange($0, close).length > 0
+            }) {
+                location = match.range.location + 1
+            } else {
+                matches.append(match)
+                location = NSMaxRange(match.range)
+            }
+        }
+        return matches
+    }
 
     private var isHighlighting = false
 
@@ -243,6 +271,7 @@ final class MarkdownHighlighter {
         func insideTriple(_ range: NSRange) -> Bool {
             tripleRanges.contains { NSIntersectionRange($0, range).length > 0 }
         }
+        var boldMarkerRanges: [NSRange] = []
         Self.boldText.enumerateMatches(in: line, range: localRange) { m, _, _ in
             guard let m, !insideTriple(m.range) else { return }
             let r = global(m.range)
@@ -254,14 +283,20 @@ final class MarkdownHighlighter {
             let dLen = m.range(at: 1).length
             let open = NSRange(location: r.location, length: dLen)
             let close = NSRange(location: NSMaxRange(r) - dLen, length: dLen)
+            boldMarkerRanges.append(NSRange(location: m.range.location, length: dLen))
+            boldMarkerRanges.append(NSRange(location: NSMaxRange(m.range) - dLen, length: dLen))
             for delim in [open, close] {
                 ts.addAttribute(.foregroundColor, value: Theme.dim, range: delim)
                 mark(delim)
             }
         }
-        Self.italicText.enumerateMatches(in: line, range: localRange) { m, _, _ in
-            guard let m, !insideTriple(m.range) else { return }
+        for m in Self.validItalicMatches(in: line, range: localRange,
+                                         blockedByBoldMarkers: boldMarkerRanges) {
+            guard !insideTriple(m.range) else { continue }
             let r = global(m.range)
+            let delimiterLength = m.range(at: 1).length
+            let open = NSRange(location: r.location, length: delimiterLength)
+            let close = NSRange(location: NSMaxRange(r) - delimiterLength, length: delimiterLength)
             // Real italic face when the family has one; slant otherwise.
             // Color is left alone so italics inherit their surroundings.
             let (italicFont, synthetic) = Theme.italicFont(size: Theme.fontSize)
@@ -270,8 +305,6 @@ final class MarkdownHighlighter {
             } else {
                 ts.addAttribute(.font, value: italicFont, range: r)
             }
-            let open = NSRange(location: r.location, length: 1)
-            let close = NSRange(location: NSMaxRange(r) - 1, length: 1)
             for delim in [open, close] {
                 ts.addAttributes([.foregroundColor: Theme.dim, .obliqueness: 0.0], range: delim)
                 mark(delim)
@@ -314,6 +347,22 @@ final class MarkdownHighlighter {
             if let color = NSColor(hexString: (line as NSString).substring(with: m.range(at: 1))) {
                 ts.addAttribute(.foregroundColor, value: color, range: contentRange)
             }
+            let openTag = NSRange(location: r.location, length: contentRange.location - r.location)
+            let closeTag = NSRange(location: NSMaxRange(contentRange), length: NSMaxRange(r) - NSMaxRange(contentRange))
+            for tag in [openTag, closeTag] {
+                ts.addAttribute(.foregroundColor, value: Theme.dim, range: tag)
+                mark(tag)
+            }
+        }
+        // The muted palette choice is the normal prose color at half alpha.
+        // Keep it separate from a fixed hex color so it continues to follow
+        // the theme's foreground color.
+        Self.halfOpacitySpan.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m else { return }
+            let r = global(m.range)
+            let contentRange = global(m.range(at: 1))
+            ts.addAttribute(.foregroundColor, value: Theme.foreground.withAlphaComponent(0.5),
+                            range: contentRange)
             let openTag = NSRange(location: r.location, length: contentRange.location - r.location)
             let closeTag = NSRange(location: NSMaxRange(contentRange), length: NSMaxRange(r) - NSMaxRange(contentRange))
             for tag in [openTag, closeTag] {

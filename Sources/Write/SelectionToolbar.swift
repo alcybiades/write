@@ -61,6 +61,9 @@ final class SelectionToolbar {
                 self?.textView?.applyColor(hex: hex)
             })
         }
+        views.append(ColorDotButton(color: Theme.halfOpacityText, toolTip: "50% Opacity") { [weak self] in
+            self?.textView?.applyHalfOpacity()
+        })
 
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal

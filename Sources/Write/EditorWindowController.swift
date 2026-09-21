@@ -8,6 +8,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     private(set) var documents: [Document]
     private(set) var current = 0
     var currentDocument: Document { documents[current] }
+    private var tabActivationOrder: [ObjectIdentifier] = []
 
     private weak var app: AppDelegate?
 
@@ -55,6 +56,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         window.minSize = NSSize(width: 420, height: 320)
         window.collectionBehavior = [.fullScreenPrimary]
         buildUI()
+        recordTabActivation()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -345,6 +347,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         flushAutosave()
         currentDocument.selection = textView.selectedRange()
         current = index
+        recordTabActivation()
         let doc = currentDocument
         textView.layoutManager?.replaceTextStorage(doc.storage)
         textView.rehighlight()
@@ -397,11 +400,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
     }
 
     private func reattachCurrent() {
+        recordTabActivation()
         textView.layoutManager?.replaceTextStorage(currentDocument.storage)
         textView.rehighlight()
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         refreshChrome()
         window?.makeFirstResponder(currentDocument.kind == .markdown ? textView : preview)
+    }
+
+    private func recordTabActivation() {
+        let openTabs = Set(documents.map { ObjectIdentifier($0) })
+        let active = ObjectIdentifier(currentDocument)
+        tabActivationOrder.removeAll { $0 == active || !openTabs.contains($0) }
+        tabActivationOrder.insert(active, at: 0)
+    }
+
+    /// Match whole path components, so a sibling like Studio-Archive isn't
+    /// treated as part of Studio. Re-evaluate URLs after renames or Save As.
+    private var mostRecentSidebarTab: Int? {
+        guard let root = workspace?.root.standardizedFileURL.pathComponents else { return nil }
+        let candidates = documents.indices.filter { index in
+            documents[index].url?.standardizedFileURL.pathComponents.starts(with: root) == true
+        }
+        if candidates.contains(current) { return current }
+        for id in tabActivationOrder {
+            if let index = candidates.first(where: { ObjectIdentifier(documents[$0]) == id }) { return index }
+        }
+        return candidates.first
     }
 
     @objc func nextTab(_ sender: Any?) {
@@ -685,11 +710,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         return Document(url: url, content: content)
     }
 
-    /// Sidebar navigation: show `url` in the current tab rather than spawning
-    /// one. A tab already holding the file is focused. Edits flush to their
-    /// file before the tab's document is replaced (the same autosave path a
-    /// tab switch takes); only untitled buffers holding text keep their tab,
-    /// since they have no file to flush to.
+    /// Sidebar navigation reuses the most recently active tab within its root.
+    /// Unrelated files and untitled buffers keep their tabs. If no associated
+    /// tab remains, create one; an already-open destination always takes priority.
     func openInCurrentTab(_ url: URL) {
         let url = url.standardizedFileURL
         guard FileManager.default.fileExists(atPath: url.path), FileManager.default.isReadableFile(atPath: url.path) else {
@@ -697,9 +720,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         }
         if let index = documents.firstIndex(where: { $0.url?.standardizedFileURL.path == url.path }) {
             switchTab(to: index); return
-        }
-        guard currentDocument.url != nil || (!currentDocument.edited && currentDocument.storage.length == 0) else {
-            open(url: url, forceNewTab: true); return
         }
         let doc: Document
         if FileKind.classify(url) == .markdown {
@@ -709,10 +729,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             doc = Document(url: url)
         }
         commitTitleIfEditing()
-        flushAutosave()
         app?.addRecentFile(url)
-        documents[current] = doc
-        switchTab(to: current)
+        if let index = mostRecentSidebarTab {
+            if index != current { switchTab(to: index) }
+            flushAutosave()
+            documents[index] = doc
+            switchTab(to: index)
+        } else {
+            documents.append(doc)
+            switchTab(to: documents.count - 1)
+        }
     }
 
     func restoreTab(url: URL) {

@@ -62,6 +62,10 @@ the session. **File → Close Folder** removes the sidebar and keeps your tabs.
 - **Files** (document symbol) shows the directory tree. Click a Markdown or text
   file to edit it, an image to view it fitted to the window with its aspect ratio
   preserved, or another file to see “Rendering not yet supported.”
+- Sidebar navigation reuses the most recently active tab whose file or folder
+  is inside the sidebar's root. Unrelated files and untitled tabs stay open;
+  if no associated tab remains, a new one opens. If the clicked item already
+  has a tab, that tab is selected instead.
 - Drag the sidebar's right edge to resize it. The leftmost tab-bar button
   collapses or expands it without moving. Dragging nearly closed also collapses it.
 - **Media** (image symbol) shows folders only. Click a folder to browse images
