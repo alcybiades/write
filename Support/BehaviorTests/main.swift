@@ -38,8 +38,10 @@ let originalBoldColor = Theme.bold
 let originalItalicColor = Theme.italic
 Theme.bold = NSColor(hex: 0x123456)
 Theme.italic = NSColor(hex: 0x654321)
-check("bold semantic color persists", Theme.bold.rgbHexString ?? "", "123456")
-check("italic semantic color persists", Theme.italic.rgbHexString ?? "", "654321")
+check("bold semantic color persists", Theme.bold?.rgbHexString ?? "", "123456")
+check("italic semantic color persists", Theme.italic?.rgbHexString ?? "", "654321")
+Theme.bold = nil
+checkTrue("semantic color supports no color", Theme.bold == nil)
 Theme.bold = originalBoldColor
 Theme.italic = originalItalicColor
 

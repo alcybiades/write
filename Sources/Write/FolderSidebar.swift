@@ -195,7 +195,7 @@ final class FolderSidebar: NSView, NSOutlineViewDataSource, NSOutlineViewDelegat
         let cell = SidebarFileCell()
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: node.isDirectory ? "folder" : (FileKind.classify(node.url) == .image ? "photo" : "doc"), accessibilityDescription: nil)
-        icon.contentTintColor = node.isDirectory ? Theme.heading : Theme.secondary
+        icon.contentTintColor = node.isDirectory ? (Theme.heading ?? Theme.foreground) : Theme.secondary
         let label = NSTextField(labelWithString: node.url.lastPathComponent)
         label.font = Theme.interfaceFont(size: 13.5)
         label.textColor = Theme.foreground.withAlphaComponent(0.85)

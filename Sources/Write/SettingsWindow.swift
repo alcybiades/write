@@ -8,6 +8,8 @@ final class SettingsWindowController: NSObject {
     private let onFontChange: () -> Void
     private var interfaceLabels: [(label: NSTextField, size: CGFloat)] = []
     private var popups: [NSPopUpButton] = []
+    private var colorWells: [Int: NSColorWell] = [:]
+    private var noColorButtons: [Int: NSButton] = [:]
 
     private enum ColorRole: Int, CaseIterable {
         case bold, heading, italic, listMarker, quote, inlineCode, link
@@ -24,7 +26,7 @@ final class SettingsWindowController: NSObject {
             }
         }
 
-        var color: NSColor {
+        var color: NSColor? {
             get {
                 switch self {
                 case .bold: return Theme.bold
@@ -190,7 +192,7 @@ final class SettingsWindowController: NSObject {
         interfaceLabels.append((label, 13))
 
         let well = NSColorWell()
-        well.color = role.color
+        well.color = role.color ?? Theme.foreground
         well.tag = role.rawValue
         well.target = self
         well.action = #selector(colorSelected(_:))
@@ -200,7 +202,16 @@ final class SettingsWindowController: NSObject {
             well.heightAnchor.constraint(equalToConstant: 24),
         ])
 
-        let row = NSStackView(views: [label, well])
+        let noColor = NSButton(checkboxWithTitle: "No color", target: self,
+                               action: #selector(noColorSelected(_:)))
+        noColor.tag = role.rawValue
+        noColor.font = Theme.interfaceFont(size: 12)
+        noColor.state = role.color == nil ? .on : .off
+        well.isEnabled = role.color != nil
+        colorWells[role.rawValue] = well
+        noColorButtons[role.rawValue] = noColor
+
+        let row = NSStackView(views: [label, well, noColor])
         row.orientation = .horizontal
         row.spacing = 12
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -218,6 +229,7 @@ final class SettingsWindowController: NSObject {
                 entry.label.font = Theme.interfaceFont(size: entry.size)
             }
             popups.forEach { $0.font = Theme.interfaceFont(size: 13) }
+            noColorButtons.values.forEach { $0.font = Theme.interfaceFont(size: 12) }
         }
         onFontChange()
     }
@@ -225,6 +237,21 @@ final class SettingsWindowController: NSObject {
     @objc private func colorSelected(_ sender: NSColorWell) {
         guard var role = ColorRole(rawValue: sender.tag) else { return }
         role.color = sender.color
+        noColorButtons[sender.tag]?.state = .off
+        sender.isEnabled = true
+        onFontChange()
+    }
+
+    @objc private func noColorSelected(_ sender: NSButton) {
+        guard var role = ColorRole(rawValue: sender.tag) else { return }
+        if sender.state == .on {
+            role.color = nil
+            colorWells[sender.tag]?.isEnabled = false
+        } else {
+            let color = colorWells[sender.tag]?.color ?? Theme.foreground
+            role.color = color
+            colorWells[sender.tag]?.isEnabled = true
+        }
         onFontChange()
     }
 }

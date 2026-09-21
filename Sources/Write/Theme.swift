@@ -31,44 +31,46 @@ enum Theme {
     static let backgroundOpacity: CGFloat = 0.60
 
     static let foreground = NSColor(hex: 0x63D0FF)
-    private static func semanticColor(_ key: String, fallback: UInt32) -> NSColor {
-        AppState.defaults.string(forKey: key).flatMap(NSColor.init(hexString:))
-            ?? NSColor(hex: fallback)
+    private static func semanticColor(_ key: String, fallback: UInt32) -> NSColor? {
+        guard let stored = AppState.defaults.string(forKey: key) else { return NSColor(hex: fallback) }
+        if stored == "none" { return nil }
+        return NSColor(hexString: stored) ?? NSColor(hex: fallback)
     }
 
-    private static func setSemanticColor(_ color: NSColor, key: String) {
+    private static func setSemanticColor(_ color: NSColor?, key: String) {
+        guard let color else { AppState.defaults.set("none", forKey: key); return }
         if let hex = color.rgbHexString { AppState.defaults.set(hex, forKey: key) }
     }
 
-    static var bold: NSColor {
+    static var bold: NSColor? {
         get { semanticColor("boldColor", fallback: 0xFFFFFF) }
         set { setSemanticColor(newValue, key: "boldColor") }
     }
-    static var heading: NSColor {
+    static var heading: NSColor? {
         get { semanticColor("headingColor", fallback: 0xA4BEEF) }
         set { setSemanticColor(newValue, key: "headingColor") }
     }
-    static var italic: NSColor {
+    static var italic: NSColor? {
         get { semanticColor("italicColor", fallback: 0xD7E0FF) }
         set { setSemanticColor(newValue, key: "italicColor") }
     }
     static let code = NSColor(hex: 0x55E6A5)
-    static var codeAmber: NSColor {
+    static var codeAmber: NSColor? {
         get { semanticColor("inlineCodeColor", fallback: 0xFFB86C) }
         set { setSemanticColor(newValue, key: "inlineCodeColor") }
     }
     static let dim = NSColor(hex: 0x526078)
     // Translucent secondary chrome; separate from subdued Markdown syntax.
     static let secondary = NSColor.white.withAlphaComponent(0.5)
-    static var listMarker: NSColor {
+    static var listMarker: NSColor? {
         get { semanticColor("listMarkerColor", fallback: 0xFFD166) }
         set { setSemanticColor(newValue, key: "listMarkerColor") }
     }
-    static var quote: NSColor {
+    static var quote: NSColor? {
         get { semanticColor("quoteColor", fallback: 0xBF8EE8) }
         set { setSemanticColor(newValue, key: "quoteColor") }
     }
-    static var link: NSColor {
+    static var link: NSColor? {
         get { semanticColor("linkColor", fallback: 0x7DD3FC) }
         set { setSemanticColor(newValue, key: "linkColor") }
     }

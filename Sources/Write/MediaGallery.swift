@@ -90,7 +90,7 @@ final class BreadcrumbBar: NSView {
             let name = path.lastPathComponent.isEmpty ? "/" : path.lastPathComponent
             if isImage && index == paths.count - 1 {
                 let label = NSTextField(labelWithString: name)
-                label.font = Theme.interfaceFont(size: 12.5); label.textColor = Theme.heading
+                label.font = Theme.interfaceFont(size: 12.5); label.textColor = Theme.heading ?? Theme.foreground
                 append(label, size: label.fittingSize)
             } else {
                 let button = NSButton(title: name, target: self, action: #selector(navigate(_:)))
