@@ -120,7 +120,16 @@ final class EditorTextView: NSTextView {
             name: NSTextView.didChangeSelectionNotification, object: self)
     }
 
+    /// Supplies the current document's directory so relative image paths
+    /// resolve against it; queried fresh on every highlight pass.
+    var baseDirectoryProvider: (() -> URL?)? {
+        didSet {
+            highlighter.onImageLoaded = { [weak self] in self?.rehighlight() }
+        }
+    }
+
     func rehighlight() {
+        highlighter.baseDirectory = baseDirectoryProvider?() ?? nil
         if let textStorage { highlighter.highlight(textStorage) }
         typingAttributes = Theme.baseAttributes
     }

@@ -32,12 +32,57 @@ final class CodeBackgroundLayoutManager: NSLayoutManager {
                                           forCharacterRange: charRange, color: color)
         }
     }
+
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+        guard let textStorage else { return }
+        let charRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        textStorage.enumerateAttribute(.mdImage, in: charRange) { value, range, _ in
+            guard let embed = value as? ImageEmbed else { return }
+            let glyphRange = self.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return }
+            let fragment = self.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            var size = embed.size
+            let maxWidth = fragment.width - 8
+            if size.width > maxWidth, maxWidth > 20 {
+                let scale = maxWidth / size.width
+                size = NSSize(width: maxWidth, height: size.height * scale)
+            }
+            let drawRect = NSRect(
+                x: fragment.minX + origin.x,
+                y: fragment.minY + origin.y + (fragment.height - size.height) / 2,
+                width: size.width,
+                height: size.height
+            )
+            NSGraphicsContext.current?.saveGraphicsState()
+            NSBezierPath(roundedRect: drawRect,
+                         xRadius: Theme.imageCornerRadius,
+                         yRadius: Theme.imageCornerRadius).addClip()
+            embed.image.draw(in: drawRect, from: .zero, operation: .sourceOver,
+                             fraction: 1.0, respectFlipped: true,
+                             hints: [.interpolation: NSImageInterpolation.high.rawValue])
+            NSGraphicsContext.current?.restoreGraphicsState()
+        }
+    }
 }
 
 extension NSAttributedString.Key {
     /// Marks markdown syntax characters (##, **, backticks, link urls…).
     /// The editor hides these glyphs unless the caret is on their paragraph.
     static let mdMarker = NSAttributedString.Key("mdMarker")
+    /// Carries an ImageEmbed for image syntax; drawn by the layout manager.
+    static let mdImage = NSAttributedString.Key("mdImage")
+}
+
+/// A resolved image embed carried as an attribute on the (concealed)
+/// image syntax; the layout manager draws it inside the line fragment.
+final class ImageEmbed: NSObject {
+    let image: NSImage
+    let size: NSSize
+    init(image: NSImage, size: NSSize) {
+        self.image = image
+        self.size = size
+    }
 }
 
 /// Live, in-place styling of markdown source. Content is styled; syntax
@@ -94,6 +139,66 @@ final class MarkdownHighlighter {
             }
         }
         return matches
+    }
+
+    static let imageEmbed = MarkdownHighlighter.regex(#"^\s*!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$"#)
+    static let wikiImageEmbed = MarkdownHighlighter.regex(#"^\s*!\[\[([^\]\n]+)\]\]\s*$"#)
+
+    /// Directory of the current document; relative image paths resolve here.
+    var baseDirectory: URL?
+    /// Called (on main, outside a highlight pass) when an async image load
+    /// finishes and the document should re-render.
+    var onImageLoaded: (() -> Void)?
+
+    private var loadedEmbeds: [String: ImageEmbed] = [:]
+    private var failedImagePaths: Set<String> = []
+    private var imagesInFlight: Set<String> = []
+
+    private enum EmbedState {
+        case loaded(ImageEmbed)
+        case pending
+        case failed
+    }
+
+    /// Resolves and (asynchronously, via the shared ImageLoader thumbnail
+    /// pipeline) loads an embedded image; never decodes on the main thread.
+    private func embedState(path rawPath: String) -> EmbedState {
+        let path = rawPath.trimmingCharacters(in: .whitespaces)
+            .removingPercentEncoding ?? rawPath
+        let expanded = (path as NSString).expandingTildeInPath
+        let url: URL
+        if expanded.hasPrefix("/") {
+            url = URL(fileURLWithPath: expanded)
+        } else if let baseDirectory {
+            url = baseDirectory.appendingPathComponent(expanded)
+        } else {
+            return .failed
+        }
+        let key = url.path
+        if let embed = loadedEmbeds[key] { return .loaded(embed) }
+        if failedImagePaths.contains(key) { return .failed }
+        if imagesInFlight.contains(key) { return .pending }
+        guard FileManager.default.fileExists(atPath: key) else { return .failed }
+        imagesInFlight.insert(key)
+        ImageLoader.shared.thumbnail(url, pixels: 768) { [weak self] cgImage in
+            guard let self else { return }
+            imagesInFlight.remove(key)
+            if let cgImage {
+                let scale = NSScreen.main?.backingScaleFactor ?? 2
+                var size = NSSize(width: CGFloat(cgImage.width) / scale,
+                                  height: CGFloat(cgImage.height) / scale)
+                if size.width > Theme.maxImageWidth {
+                    let factor = Theme.maxImageWidth / size.width
+                    size = NSSize(width: Theme.maxImageWidth, height: size.height * factor)
+                }
+                let image = NSImage(cgImage: cgImage, size: size)
+                loadedEmbeds[key] = ImageEmbed(image: image, size: size)
+            } else {
+                failedImagePaths.insert(key)
+            }
+            onImageLoaded?()
+        }
+        return .pending
     }
 
     private var isHighlighting = false
@@ -212,6 +317,29 @@ final class MarkdownHighlighter {
             ts.addAttributes([.font: monoFont, .foregroundColor: Theme.code,
                               .backgroundColor: Theme.codeBlockBackground,
                               .paragraphStyle: codeStyle], range: lineRange)
+            return
+        }
+
+        // Image embeds: the syntax line conceals entirely and the layout
+        // manager draws the image in the (heightened) line fragment.
+        for (regex, pathGroup) in [(Self.imageEmbed, 2), (Self.wikiImageEmbed, 1)] {
+            guard let m = regex.firstMatch(in: line, range: localRange) else { continue }
+            let path = (line as NSString).substring(with: m.range(at: pathGroup))
+            switch embedState(path: path) {
+            case .loaded(let embed):
+                let style = NSMutableParagraphStyle()
+                style.minimumLineHeight = embed.size.height + 12
+                ts.addAttributes([
+                    .paragraphStyle: style,
+                    .foregroundColor: Theme.dim,
+                    .mdImage: embed,
+                ], range: lineRange)
+                mark(global(m.range))
+            case .pending, .failed:
+                // Loading, or missing file: keep the syntax visible but
+                // dimmed (a broken path can then be seen and fixed).
+                ts.addAttribute(.foregroundColor, value: Theme.dim, range: lineRange)
+            }
             return
         }
 

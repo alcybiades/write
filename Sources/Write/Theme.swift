@@ -83,6 +83,9 @@ enum Theme {
     static let codeBlockBackground = NSColor(hex: 0x2E2E2E, alpha: 0.5)
     static let codeBlockPadding: CGFloat = 12
 
+    static let maxImageWidth: CGFloat = 440
+    static let imageCornerRadius: CGFloat = 8
+
     /// Monospaced font for code, independent of the body family.
     /// (The system monospaced font is SF Mono on modern macOS.)
     static func codeFont(size: CGFloat) -> NSFont {

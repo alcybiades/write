@@ -88,6 +88,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
                                   height: CGFloat.greatestFiniteMagnitude)
         textView.configure()
         textView.delegate = self
+        textView.baseDirectoryProvider = { [weak self] in
+            self?.currentDocument.url?.deletingLastPathComponent()
+        }
         selectionToolbar = SelectionToolbar(textView: textView)
 
         titleView = NSTextView(frame: .zero)

@@ -18,6 +18,7 @@ test:
 		Sources/Write/Workspace.swift \
 		Sources/Write/ReferencePicker.swift \
 		Sources/Write/MarkdownHighlighter.swift \
+		Sources/Write/ImageLoader.swift \
 		Sources/Write/EditorTextView.swift \
 		Support/BehaviorTests/main.swift
 	@.build/tests/behavior
