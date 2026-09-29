@@ -196,17 +196,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
             guard let workspace = self?.workspace else { return [] }
             return workspace.matches(query).map { ($0, FileReference.relativePath(to: $0, from: workspace.root)) }
         }
-        textView.onInsertReference = { [weak self] url, range in
+        textView.onInsertReference = { [weak self] url, range, style in
             guard let self else { return }
             if self.currentDocument.url == nil { self.promptForSaveURL() }
             guard let source = self.currentDocument.url else { return }
-            self.textView.insertText(FileReference.markdown(to: url, from: source), replacementRange: range)
+            let text: String
+            switch style {
+            case .markdown:
+                text = FileReference.markdown(to: url, from: source)
+            case .wiki:
+                text = "[[\(self.workspace?.wikiName(for: url) ?? url.deletingPathExtension().lastPathComponent)]]"
+            }
+            self.textView.insertText(text, replacementRange: range)
         }
-        textView.onOpenReference = { [weak self] destination in
-            guard let self, let source = self.currentDocument.url,
-                  let url = FileReference.resolve(destination, from: source) else { return }
-            self.open(url: url, forceNewTab: true)
-        }
+        textView.onOpenReference = { [weak self] destination in self?.follow(destination) }
+        textView.onOpenWikiLink = { [weak self] target in self?.followWikiLink(target) }
+        textView.wikiLinkResolver = { [weak self] target in self?.resolveWikiLink(target) }
         container.addSubview(tabBar)
         container.addSubview(scrollView)
         container.addSubview(statusPill)
@@ -654,6 +659,68 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSText
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK { for url in panel.urls { open(url: url) } }
+    }
+
+    // MARK: - Following links
+
+    /// Follows a Markdown link destination. Relative paths resolve against
+    /// the linking file exactly as GitHub renders them; `#fragments` scroll
+    /// within the document; anything with a scheme goes to the system.
+    private func follow(_ destination: String) {
+        switch FileReference.target(destination, from: currentDocument.url) {
+        case .file(let url, let anchor):
+            openLink(url, anchor: anchor)
+        case .external(let url):
+            NSWorkspace.shared.open(url)
+        case .anchor(let anchor):
+            scrollToAnchor(anchor)
+        case .unresolved:
+            NSSound.beep()
+        }
+    }
+
+    /// Follows an Obsidian `[[wiki link]]`, resolved by note name against
+    /// the open folder (or against the file's own directory without one).
+    private func followWikiLink(_ target: String) {
+        let (name, anchor) = FileReference.splitAnchor(target)
+        guard !name.isEmpty else {
+            if let anchor { scrollToAnchor(anchor) }
+            return
+        }
+        guard let url = resolveWikiLink(target) else { NSSound.beep(); return }
+        openLink(url, anchor: anchor)
+    }
+
+    private func resolveWikiLink(_ target: String) -> URL? {
+        if let workspace { return workspace.resolveWikiLink(target, from: currentDocument.url) }
+        guard let source = currentDocument.url else { return nil }
+        return FileReference.resolveWikiSibling(target, from: source)
+    }
+
+    private func openLink(_ url: URL, anchor: String?) {
+        // A link to a file Write cannot display hands off to the system
+        // rather than opening an unreadable tab.
+        if FileKind.classify(url) == .unsupported, FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        guard open(url: url, forceNewTab: true) else { return }
+        if let anchor { scrollToAnchor(anchor) }
+    }
+
+    /// Scrolls the current document to the heading an `#anchor` names.
+    private func scrollToAnchor(_ anchor: String) {
+        guard currentDocument.kind == .markdown,
+              let range = MarkdownHighlighter.headingRange(forAnchor: anchor,
+                                                           in: textView.string as NSString) else {
+            NSSound.beep(); return
+        }
+        textView.setSelectedRange(NSRange(location: range.location, length: 0))
+        // Reveal some of what follows the heading, then pin the heading itself.
+        textView.scrollRangeToVisible(NSRange(location: min(NSMaxRange(range) + 400,
+                                                            (textView.string as NSString).length), length: 0))
+        textView.scrollRangeToVisible(range)
+        window?.makeFirstResponder(textView)
     }
 
     @discardableResult

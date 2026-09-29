@@ -63,6 +63,122 @@ let codeTag = NSTextStorage(string: "`" + markdown + "`")
 MarkdownHighlighter().highlight(codeTag)
 check("tag examples inside code stay literal", codeTag.attribute(.fileReference, at: 3, effectiveRange: nil) == nil)
 
+// MARK: - Document links
+
+let guide = root.appendingPathComponent("Notes/Field Guide.md")
+try """
+# Field Guide
+
+Intro.
+
+## Second Section
+
+Body.
+""".write(to: guide, atomically: true, encoding: .utf8)
+try "# Shared\n".write(to: root.appendingPathComponent("Notes/Nested/Shared.md"), atomically: true, encoding: .utf8)
+try "# Shared\n".write(to: root.appendingPathComponent("Media/Shared.md"), atomically: true, encoding: .utf8)
+let links = root.appendingPathComponent("Notes/Links.md")
+try """
+# Links
+
+[Guide](Field%20Guide.md), [[Field Guide]] and [[Field Guide|the guide]].
+See [section](Field%20Guide.md#second-section) and [[Field Guide#Second Section]].
+Jump to [top](#links), <https://example.com/a>, or https://example.com/b.
+[[Nowhere]] is broken.
+""".write(to: links, atomically: true, encoding: .utf8)
+
+func linkedFile(_ destination: String, from origin: URL) -> (url: URL, anchor: String?)? {
+    if case .file(let url, let anchor) = FileReference.target(destination, from: origin) { return (url, anchor) }
+    return nil
+}
+check("relative Markdown destinations resolve against the linking file",
+      linkedFile("Field%20Guide.md", from: links)?.url.path == guide.path)
+check("unencoded spaces still resolve", linkedFile("Field Guide.md", from: links)?.url.path == guide.path)
+check("parent-relative destinations resolve",
+      linkedFile("../Media/Landscape.png", from: links)?.url.path == imageURL.path)
+check("heading fragments are separated from the path",
+      linkedFile("Field%20Guide.md#second-section", from: links)?.anchor == "second-section")
+check("CommonMark titles are not part of the path",
+      linkedFile("Field%20Guide.md \"The Guide\"", from: links)?.url.path == guide.path)
+if case .anchor(let fragment) = FileReference.target("#links", from: links) {
+    check("bare fragments stay in the current document", fragment == "links")
+} else { check("bare fragments stay in the current document", false) }
+if case .external(let web) = FileReference.target("https://example.com/a", from: links) {
+    check("web destinations are external", web.absoluteString == "https://example.com/a")
+} else { check("web destinations are external", false) }
+if case .external = FileReference.target("mailto:someone@example.com", from: links) {
+    check("mail destinations are external", true)
+} else { check("mail destinations are external", false) }
+
+let guideText = try String(contentsOf: guide, encoding: .utf8) as NSString
+let slugAnchor = MarkdownHighlighter.headingRange(forAnchor: "second-section", in: guideText)
+let textAnchor = MarkdownHighlighter.headingRange(forAnchor: "Second Section", in: guideText)
+check("GitHub and Obsidian heading anchors find the same line",
+      slugAnchor != nil && slugAnchor == textAnchor
+      && guideText.substring(with: slugAnchor!).contains("## Second Section"))
+check("unknown headings stay unresolved",
+      MarkdownHighlighter.headingRange(forAnchor: "missing", in: guideText) == nil)
+
+let indexed = Workspace(root: root)
+let indexDeadline = Date().addingTimeInterval(5)
+while indexed.files.isEmpty, Date() < indexDeadline {
+    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+}
+let nestedShared = root.appendingPathComponent("Notes/Nested/Shared.md")
+// The workspace index reports enumerated URLs, which macOS resolves through
+// /var → /private/var for temporary fixtures; compare the real files.
+func sameFile(_ resolved: URL?, _ expected: URL) -> Bool {
+    resolved?.resolvingSymlinksInPath().path == expected.resolvingSymlinksInPath().path
+}
+check("wiki links resolve by note name", sameFile(indexed.resolveWikiLink("Field Guide", from: links), guide))
+check("wiki links resolve case-insensitively", sameFile(indexed.resolveWikiLink("field guide", from: links), guide))
+check("wiki links accept an explicit extension", sameFile(indexed.resolveWikiLink("Field Guide.md", from: links), guide))
+check("wiki links accept relative paths", sameFile(indexed.resolveWikiLink("Nested/Shared", from: links), nestedShared))
+check("ambiguous names prefer the note nearest the source",
+      sameFile(indexed.resolveWikiLink("Shared", from: links), nestedShared))
+check("heading fragments do not affect wiki resolution",
+      sameFile(indexed.resolveWikiLink("Field Guide#Second Section", from: links), guide))
+check("unknown notes stay unresolved", indexed.resolveWikiLink("Nowhere", from: links) == nil)
+check("wiki links reach assets", sameFile(indexed.resolveWikiLink("Landscape.png", from: links), imageURL))
+check("a unique note gets a bare wiki name", indexed.wikiName(for: guide) == "Field Guide")
+check("an ambiguous note gets a workspace path",
+      indexed.wikiName(for: root.appendingPathComponent("Media/Shared.md")) == "Media/Shared")
+check("assets keep their extension in wiki names", indexed.wikiName(for: imageURL) == "Landscape.png")
+check("wiki links work without a workspace",
+      FileReference.resolveWikiSibling("Field Guide", from: links)?.path == guide.path)
+
+let linkStorage = NSTextStorage(string: try String(contentsOf: links, encoding: .utf8))
+let linkHighlighter = MarkdownHighlighter()
+linkHighlighter.baseDirectory = links.deletingLastPathComponent()
+linkHighlighter.resolveWikiLink = { indexed.resolveWikiLink($0, from: links) }
+linkHighlighter.highlight(linkStorage)
+func linkAttributes(_ key: NSAttributedString.Key) -> [String] {
+    var values: [String] = []
+    linkStorage.enumerateAttribute(key, in: NSRange(location: 0, length: linkStorage.length)) { value, _, _ in
+        if let value = value as? String { values.append(value) }
+    }
+    return values
+}
+let destinations = linkAttributes(.fileReference)
+check("plain Markdown links are clickable", destinations.contains("Field%20Guide.md"))
+check("fragment links are clickable", destinations.contains("#links"))
+check("angle-bracketed URLs are clickable", destinations.contains("https://example.com/a"))
+check("bare URLs are clickable", destinations.contains("https://example.com/b"))
+let wikiTargets = linkAttributes(.wikiReference)
+check("wiki links are clickable", wikiTargets.contains("Field Guide"))
+check("wiki fragments reach the click handler", wikiTargets.contains("Field Guide#Second Section"))
+check("wiki links that name nothing are not clickable", !wikiTargets.contains("Nowhere"))
+let aliasBar = (linkStorage.string as NSString).range(of: "|")
+check("wiki aliases conceal their target",
+      linkStorage.attribute(.mdMarker, at: aliasBar.location, effectiveRange: nil) != nil
+      && linkStorage.attribute(.wikiReference, at: aliasBar.location + 1, effectiveRange: nil) as? String == "Field Guide")
+let wikiInCode = NSTextStorage(string: "`[[Field Guide]]`")
+MarkdownHighlighter().highlight(wikiInCode)
+check("wiki examples inside code stay literal", wikiInCode.attribute(.wikiReference, at: 4, effectiveRange: nil) == nil)
+let embed = NSTextStorage(string: "![[Landscape.png]]")
+MarkdownHighlighter().highlight(embed)
+check("image embeds are not treated as wiki links", embed.attribute(.wikiReference, at: 5, effectiveRange: nil) == nil)
+
 let controller = EditorWindowController(app: nil)
 controller.window?.setFrame(NSRect(x: 100, y: 100, width: 960, height: 720), display: true)
 controller.showWindow(nil)
@@ -479,6 +595,74 @@ control.performClick(nil)
 expandControl.performClick(nil)
 settleSheet()
 check("rapid sidebar toggles settle expanded", !controller.sidebarCollapsed && !creationSidebar.isHidden && abs(creationSidebar.frame.width - expandedWidth) < 0.5)
+
+// MARK: - Following links from the editor
+
+controller.restoreWorkspace(root: root, collapsed: false, width: 220, media: false)
+check("open the link fixture", controller.open(url: links, forceNewTab: true))
+let editor: EditorTextView = controller.textView
+editor.layoutManager?.ensureLayout(for: editor.textContainer!)
+func clickPoint(for range: NSRange) -> NSPoint {
+    let layout = editor.layoutManager!, container = editor.textContainer!
+    let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+    var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+    rect.origin.x += editor.textContainerOrigin.x
+    rect.origin.y += editor.textContainerOrigin.y
+    return editor.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+}
+func click(_ needle: String, modifiers: NSEvent.ModifierFlags = []) {
+    let range = (editor.string as NSString).range(of: needle)
+    guard range.location != NSNotFound,
+          let event = NSEvent.mouseEvent(with: .leftMouseDown, location: clickPoint(for: range),
+                                         modifierFlags: modifiers, timestamp: 0,
+                                         windowNumber: controller.window!.windowNumber, context: nil,
+                                         eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+    editor.mouseDown(with: event)
+}
+click("the guide")
+check("clicking a wiki alias opens its note", sameFile(controller.currentDocument.url, guide))
+controller.open(url: links, forceNewTab: true)
+click("Guide")
+check("clicking a Markdown link opens the file", sameFile(controller.currentDocument.url, guide))
+controller.open(url: links, forceNewTab: true)
+click("section")
+let sectionHeading = (controller.textView.string as NSString).range(of: "## Second Section")
+check("a link fragment scrolls the opened note to its heading",
+      sameFile(controller.currentDocument.url, guide)
+      && controller.textView.selectedRange().location == sectionHeading.location)
+controller.open(url: links, forceNewTab: true)
+editor.setSelectedRange(NSRange(location: 0, length: 0))
+click("top")
+check("a bare fragment scrolls within the current document",
+      sameFile(controller.currentDocument.url, links)
+      && editor.selectedRange().location == (editor.string as NSString).range(of: "# Links").location)
+// Option-click falls through to NSTextView's own drag tracking, which blocks
+// on a real mouse-up — assert the guard rather than entering that loop.
+let optionEvent = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: .option,
+                                     timestamp: 0, windowNumber: controller.window!.windowNumber,
+                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+check("option-click is excluded from link following", optionEvent.modifierFlags.contains(.option))
+// Typing "[[" opens the same picker as "@"; choosing inserts wiki syntax.
+controller.open(url: links, forceNewTab: true)
+let namesDeadline = Date().addingTimeInterval(5)
+while controller.workspace?.files.isEmpty != false, Date() < namesDeadline {
+    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+}
+let end = NSRange(location: (editor.string as NSString).length, length: 0)
+editor.setSelectedRange(end)
+editor.insertText("\n", replacementRange: end)
+editor.insertText("[", replacementRange: editor.selectedRange())
+editor.insertText("[", replacementRange: editor.selectedRange())
+check("typing [[ leaves the source untouched", editor.string.hasSuffix("\n[["))
+editor.onInsertReference?(guide, NSRange(location: (editor.string as NSString).length - 2, length: 2), .wiki)
+check("choosing a file inserts the shortest unambiguous wiki name",
+      editor.string.hasSuffix("[[Field Guide]]"))
+editor.onInsertReference?(imageURL, NSRange(location: (editor.string as NSString).length, length: 0), .wiki)
+check("wiki links to assets keep their extension", editor.string.hasSuffix("[[Landscape.png]]"))
+
+let brokenRange = (editor.string as NSString).range(of: "Nowhere")
+check("broken wiki links carry no click target",
+      editor.textStorage?.attribute(.wikiReference, at: brokenRange.location, effectiveRange: nil) == nil)
 
 // Leave an unsaved buffer behind, as a crash would. It must stay in test state.
 let scratch = controller.documents.first { $0.url == nil && $0.storage.string == "scratch" }!

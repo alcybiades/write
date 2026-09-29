@@ -5,18 +5,28 @@ import AppKit
 /// paragraph), slash commands, format shortcuts, and list continuation.
 final class EditorTextView: NSTextView {
 
+    /// How a chosen file is spelled into the document. `@` inserts a
+    /// Markdown link; `[[` inserts an Obsidian wiki link.
+    enum ReferenceStyle { case markdown, wiki }
+
     private let highlighter = MarkdownHighlighter()
     var referencesEnabled = false
     var referenceCandidates: ((String) -> [(URL, String)])?
-    var onInsertReference: ((URL, NSRange) -> Void)?
+    var onInsertReference: ((URL, NSRange, ReferenceStyle) -> Void)?
     var onOpenReference: ((String) -> Void)?
+    var onOpenWikiLink: ((String) -> Void)?
+    /// Lets the highlighter draw wiki links that name nothing as broken.
+    var wikiLinkResolver: ((String) -> URL?)?
     private var referenceRange: NSRange?
+    /// The literal that opened the picker: "@" or "[[".
+    private var referenceTrigger = "@"
     private lazy var referencePicker: ReferencePicker = {
         let picker = ReferencePicker()
         picker.onChoose = { [weak self] url in
             guard let self, let range = self.referenceRange else { return }
+            let style: ReferenceStyle = self.referenceTrigger == "[[" ? .wiki : .markdown
             self.referenceRange = nil
-            self.onInsertReference?(url, range)
+            self.onInsertReference?(url, range, style)
         }
         return picker
     }()
@@ -27,13 +37,15 @@ final class EditorTextView: NSTextView {
         guard let range = referenceRange, selectedRange().length == 0 else { return }
         let caret = selectedRange().location
         let ns = string as NSString
-        guard caret > range.location, caret <= ns.length,
-              ns.substring(with: NSRange(location: range.location, length: 1)) == "@",
+        let triggerLength = (referenceTrigger as NSString).length
+        guard caret >= range.location + triggerLength, caret <= ns.length,
+              ns.substring(with: NSRange(location: range.location, length: triggerLength)) == referenceTrigger,
               let window else { dismissReferences(); return }
-        let query = ns.substring(with: NSRange(location: range.location + 1, length: caret - range.location - 1))
+        let query = ns.substring(with: NSRange(location: range.location + triggerLength,
+                                               length: caret - range.location - triggerLength))
         guard !query.contains("\n"), query.count < 160 else { dismissReferences(); return }
         referenceRange = NSRange(location: range.location, length: caret - range.location)
-        referencePicker.show(referenceCandidates?(query) ?? [], below: firstRect(forCharacterRange: NSRange(location: range.location, length: 1), actualRange: nil), parent: window)
+        referencePicker.show(referenceCandidates?(query) ?? [], below: firstRect(forCharacterRange: NSRange(location: range.location, length: triggerLength), actualRange: nil), parent: window)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -56,24 +68,68 @@ final class EditorTextView: NSTextView {
         updateReferences()
     }
 
+    /// The link under a point in view coordinates, if the point actually
+    /// lands on its glyphs.
+    private func link(at viewPoint: NSPoint) -> (destination: String, wiki: Bool)? {
+        guard let layoutManager, let textContainer, let textStorage else { return nil }
+        var point = viewPoint
+        point.x -= textContainerOrigin.x; point.y -= textContainerOrigin.y
+        var fraction: CGFloat = 0
+        let glyph = layoutManager.glyphIndex(for: point, in: textContainer, fractionOfDistanceThroughGlyph: &fraction)
+        guard glyph < layoutManager.numberOfGlyphs else { return nil }
+        let index = layoutManager.characterIndexForGlyph(at: glyph)
+        let rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
+        // The inset rejects clicks in the blank run past a line's end. Scale
+        // it to the glyph so narrow letters stay clickable.
+        let hit = rect.insetBy(dx: min(3, rect.width / 3), dy: min(2, rect.height / 3))
+        guard hit.contains(point), index < textStorage.length else { return nil }
+        if let destination = textStorage.attribute(.fileReference, at: index, effectiveRange: nil) as? String {
+            return (destination, false)
+        }
+        if let target = textStorage.attribute(.wikiReference, at: index, effectiveRange: nil) as? String {
+            return (target, true)
+        }
+        return nil
+    }
+
     override func mouseDown(with event: NSEvent) {
         clearPendingInlineStyle()
         dismissReferences()
-        if !event.modifierFlags.contains(.option), let layoutManager, let textContainer, let textStorage {
-            var point = convert(event.locationInWindow, from: nil)
-            point.x -= textContainerOrigin.x; point.y -= textContainerOrigin.y
-            var fraction: CGFloat = 0
-            let glyph = layoutManager.glyphIndex(for: point, in: textContainer, fractionOfDistanceThroughGlyph: &fraction)
-            if glyph < layoutManager.numberOfGlyphs {
-                let index = layoutManager.characterIndexForGlyph(at: glyph)
-                let rect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer)
-                if rect.insetBy(dx: 3, dy: 2).contains(point), index < textStorage.length,
-                   let destination = textStorage.attribute(.fileReference, at: index, effectiveRange: nil) as? String {
-                    onOpenReference?(destination); return
+        // Option-click places the caret inside a link instead of following it.
+        if !event.modifierFlags.contains(.option),
+           let link = link(at: convert(event.locationInWindow, from: nil)) {
+            if link.wiki { onOpenWikiLink?(link.destination) } else { onOpenReference?(link.destination) }
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// A pointing hand over anything clickable, so links advertise themselves.
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return }
+        var bounds = visibleRect
+        bounds.origin.x -= textContainerOrigin.x
+        bounds.origin.y -= textContainerOrigin.y
+        let glyphRange = layoutManager.glyphRange(forBoundingRect: bounds, in: textContainer)
+        guard glyphRange.length > 0 else { return }
+        let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        for key in [NSAttributedString.Key.fileReference, .wikiReference] {
+            textStorage.enumerateAttribute(key, in: charRange) { value, range, _ in
+                guard value != nil else { return }
+                let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                layoutManager.enumerateEnclosingRects(
+                    forGlyphRange: glyphs,
+                    withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                    in: textContainer
+                ) { rect, _ in
+                    var rect = rect
+                    rect.origin.x += self.textContainerOrigin.x
+                    rect.origin.y += self.textContainerOrigin.y
+                    self.addCursorRect(rect, cursor: .pointingHand)
                 }
             }
         }
-        super.mouseDown(with: event)
     }
 
     override func resignFirstResponder() -> Bool {
@@ -130,8 +186,10 @@ final class EditorTextView: NSTextView {
 
     func rehighlight() {
         highlighter.baseDirectory = baseDirectoryProvider?() ?? nil
+        highlighter.resolveWikiLink = wikiLinkResolver
         if let textStorage { highlighter.highlight(textStorage) }
         typingAttributes = Theme.baseAttributes
+        window?.invalidateCursorRects(for: self)
     }
 
     override func didChangeText() {
@@ -372,6 +430,12 @@ final class EditorTextView: NSTextView {
         MarkdownHighlighter.linkText.enumerateMatches(in: line, range: local) { m, _, _ in
             guard let m else { return }
             spans.append(InlineSpan(range: g(m.range), content: g(m.range(at: 1))))
+        }
+        MarkdownHighlighter.wikiLink.enumerateMatches(in: line, range: local) { m, _, _ in
+            guard let m else { return }
+            let alias = m.range(at: 2)
+            spans.append(InlineSpan(range: g(m.range),
+                                    content: g(alias.location == NSNotFound ? m.range(at: 1) : alias)))
         }
         return spans
     }
@@ -722,11 +786,18 @@ final class EditorTextView: NSTextView {
             }
         }
         super.insertText(string, replacementRange: replacementRange)
-        if inserted == "@", referencesEnabled, referenceCandidates != nil, !hasMarkedText() {
+        if referencesEnabled, referenceCandidates != nil, !hasMarkedText() {
             let caret = selectedRange().location
             let ns = self.string as NSString
-            if caret > 0 && (caret == 1 || CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(ns.character(at: caret - 2)) ?? " ")) {
+            if inserted == "@", caret > 0,
+               caret == 1 || CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(ns.character(at: caret - 2)) ?? " ") {
+                referenceTrigger = "@"
                 referenceRange = NSRange(location: caret - 1, length: 1)
+                updateReferences()
+            } else if inserted == "[", caret >= 2,
+                      ns.substring(with: NSRange(location: caret - 2, length: 2)) == "[[" {
+                referenceTrigger = "[["
+                referenceRange = NSRange(location: caret - 2, length: 2)
                 updateReferences()
             }
         }

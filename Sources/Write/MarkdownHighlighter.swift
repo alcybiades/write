@@ -2,7 +2,11 @@ import AppKit
 import CoreText
 
 extension NSAttributedString.Key {
+    /// A Markdown link destination (`](here)`), verbatim from the source.
     static let fileReference = NSAttributedString.Key("WriteFileReference")
+    /// The target of an Obsidian-style `[[wiki link]]` — a note name or a
+    /// workspace path, never a URL. Resolved against the workspace index.
+    static let wikiReference = NSAttributedString.Key("WriteWikiReference")
 }
 
 /// Pads code background rects: block bands stretch back to the margin (the
@@ -143,9 +147,44 @@ final class MarkdownHighlighter {
 
     static let imageEmbed = MarkdownHighlighter.regex(#"^\s*!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$"#)
     static let wikiImageEmbed = MarkdownHighlighter.regex(#"^\s*!\[\[([^\]\n]+)\]\]\s*$"#)
+    /// Obsidian wiki link: `[[Note]]`, `[[Note#Heading]]`, `[[Note|Alias]]`.
+    /// The leading `!` of an embed is excluded so images keep their own rule.
+    static let wikiLink = MarkdownHighlighter.regex(#"(?<!\!)\[\[([^\[\]\n|]+)(?:\|([^\[\]\n]*))?\]\]"#)
+    /// Bare and angle-bracketed URLs, which GitHub turns into links too.
+    static let autoLink = MarkdownHighlighter.regex(#"<((?:https?|mailto):[^>\s]+)>|(?<![\w@./:-])((?:https?://|mailto:)[^\s<>()\[\]"'`]+[^\s<>()\[\]"'`.,;:!?])"#)
+
+    /// Headings, for resolving `#anchor` link fragments.
+    static let anchorHeading = MarkdownHighlighter.regex(#"^(#{1,6})[ \t]+(.*)$"#)
+
+    /// The line range of the heading an `#anchor` names. Both sides are
+    /// slugged, so a GitHub fragment (`#my-heading`) and an Obsidian one
+    /// (`#My Heading`) find the same line.
+    static func headingRange(forAnchor anchor: String, in text: NSString) -> NSRange? {
+        let wanted = FileReference.slug(anchor)
+        guard !wanted.isEmpty else { return nil }
+        var lineStart = 0
+        var inCodeBlock = false
+        while lineStart < text.length {
+            let lineRange = text.lineRange(for: NSRange(location: lineStart, length: 0))
+            let line = text.substring(with: lineRange)
+            let local = NSRange(location: 0, length: (line as NSString).length)
+            if fence.firstMatch(in: line, range: local) != nil {
+                inCodeBlock.toggle()
+            } else if !inCodeBlock, let m = anchorHeading.firstMatch(in: line, range: local),
+                      FileReference.slug((line as NSString).substring(with: m.range(at: 2))) == wanted {
+                return lineRange
+            }
+            lineStart = NSMaxRange(lineRange)
+        }
+        return nil
+    }
 
     /// Directory of the current document; relative image paths resolve here.
     var baseDirectory: URL?
+    /// Resolves a wiki-link target against the workspace so unresolved
+    /// links can be drawn as broken. Nil (no folder open) means "assume
+    /// resolvable" — the click handler falls back to sibling lookup.
+    var resolveWikiLink: ((String) -> URL?)?
     /// Called (on main, outside a highlight pass) when an async image load
     /// finishes and the document should re-render.
     var onImageLoaded: (() -> Void)?
@@ -471,20 +510,29 @@ final class MarkdownHighlighter {
             }
         }
         let codeRanges = Self.inlineCode.matches(in: line, range: localRange).map(\.range)
+        func insideCode(_ r: NSRange) -> Bool {
+            codeRanges.contains { NSIntersectionRange($0, r).length > 0 }
+        }
+        let linkRanges = Self.linkText.matches(in: line, range: localRange).map(\.range)
         Self.linkText.enumerateMatches(in: line, range: localRange) { m, _, _ in
-            guard let m, !codeRanges.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) else { return }
+            guard let m, !insideCode(m.range) else { return }
             let r = global(m.range)
             let textRange = global(m.range(at: 1))
+            let destination = (line as NSString).substring(with: m.range(at: 2))
             ts.addAttribute(.foregroundColor, value: Theme.dim, range: r)
             ts.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: textRange)
             if let color = Theme.link { ts.addAttribute(.foregroundColor, value: color, range: textRange) }
+            // Every link is clickable; the window decides whether the
+            // destination is a file, an in-document anchor, or a URL.
+            if !destination.isEmpty, textRange.length > 0 {
+                ts.addAttribute(.fileReference, value: destination, range: textRange)
+            }
             let label = (line as NSString).substring(with: m.range(at: 1))
             if label.hasPrefix("@") {
                 let (font, synthetic) = Theme.boldFont(size: Theme.fontSize)
                 ts.addAttributes([
                     .font: font, .foregroundColor: NSColor(hex: 0x4169E1),
                     .underlineStyle: 0,
-                    .fileReference: (line as NSString).substring(with: m.range(at: 2)),
                 ], range: textRange)
                 if synthetic { ts.addAttribute(.strokeWidth, value: -3.0, range: textRange) }
                 // Markdown escapes in filenames remain in the source only.
@@ -496,6 +544,50 @@ final class MarkdownHighlighter {
             // Hide "[", then "](url)".
             mark(NSRange(location: r.location, length: 1))
             mark(NSRange(location: NSMaxRange(textRange), length: NSMaxRange(r) - NSMaxRange(textRange)))
+        }
+        // Obsidian wiki links. The visible run is the alias when one is
+        // given, the target otherwise; the brackets conceal like any other
+        // syntax. Targets that name nothing in the workspace read as broken
+        // instead of pretending to be navigable.
+        Self.wikiLink.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m, !insideCode(m.range) else { return }
+            let r = global(m.range)
+            let target = (line as NSString).substring(with: m.range(at: 1))
+            let alias = m.range(at: 2)
+            let visible = alias.location == NSNotFound ? global(m.range(at: 1)) : global(alias)
+            let resolved = self.resolveWikiLink.map { $0(target) != nil } ?? true
+            ts.addAttribute(.foregroundColor, value: Theme.dim, range: r)
+            if resolved {
+                if let color = Theme.link { ts.addAttribute(.foregroundColor, value: color, range: visible) }
+                ts.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: visible)
+                ts.addAttribute(.wikiReference, value: target, range: visible)
+            } else {
+                ts.addAttributes([
+                    .foregroundColor: (Theme.link ?? Theme.foreground).withAlphaComponent(0.45),
+                    .underlineStyle: NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDot.rawValue,
+                ], range: visible)
+            }
+            // Hide "[[" (plus "target|" when aliased), then "]]".
+            mark(NSRange(location: r.location, length: visible.location - r.location))
+            mark(NSRange(location: NSMaxRange(visible), length: NSMaxRange(r) - NSMaxRange(visible)))
+        }
+        // Bare URLs, the way GitHub auto-links them.
+        Self.autoLink.enumerateMatches(in: line, range: localRange) { m, _, _ in
+            guard let m, !insideCode(m.range) else { return }
+            let bracketed = m.range(at: 1)
+            let inner = bracketed.location == NSNotFound ? m.range(at: 2) : bracketed
+            guard inner.location != NSNotFound,
+                  !linkRanges.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) else { return }
+            let r = global(inner)
+            if let color = Theme.link { ts.addAttribute(.foregroundColor, value: color, range: r) }
+            ts.addAttributes([
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .fileReference: (line as NSString).substring(with: inner),
+            ], range: r)
+            if bracketed.location != NSNotFound {
+                mark(NSRange(location: global(m.range).location, length: 1))
+                mark(NSRange(location: NSMaxRange(r), length: 1))
+            }
         }
         // Applied last so an explicit color wins inside bold/italic runs.
         Self.colorSpan.enumerateMatches(in: line, range: localRange) { m, _, _ in

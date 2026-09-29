@@ -97,27 +97,55 @@ the session. **File → Close Folder** removes the sidebar and keeps your tabs.
   **Refresh Folder** to update it while working. Hidden files and directories are
   omitted; the reference index does not follow symlinks or enter app packages.
 
-With a folder open, type **@** after whitespace or at the start of a line, then
-search by filename or path. Use ↑/↓ and Return/Tab, or click a result; Escape
-cancels. Any file type can be referenced. Unsaved notes ask for a save location
-before inserting a reference. Tags appear bold royal blue. Click one to open its
-file in a tab (or focus its existing tab); Option-click places the editing caret.
+With a folder open, type **@** after whitespace or at the start of a line, or
+type **`[[`** anywhere, then search by filename or path. Use ↑/↓ and Return/Tab,
+or click a result; Escape cancels. Any file type can be referenced. Unsaved
+notes ask for a save location before inserting a reference. `@` inserts a
+Markdown link (bold royal blue); `[[` inserts a wiki link.
 
-References are ordinary Markdown, for example:
+## Links between documents
+
+Write uses the two syntaxes you already know — GitHub-flavored Markdown links
+and Obsidian wiki links — and nothing else. Both are plain text in the file, so
+the same links keep working in GitHub, Obsidian, and any other Markdown tool.
 
 ```markdown
-See [@Design.md](../notes/Design.md) and [@Sketch.png](../media/Sketch.png).
+[Design notes](../notes/Design.md)          relative path, like GitHub
+[Design notes](../notes/Design.md#palette)  …at a heading
+[the brief](#project-brief)                 a heading in this document
+[@Design.md](../notes/Design.md)            an @ reference (a Markdown link)
+[[Design]]                                  wiki link by note name
+[[Design|the design notes]]                 …with different link text
+[[Design#Palette]]                          …at a heading
+[[Media/Sketch.png]]                        …by workspace path
+<https://example.com> and https://example.com   auto-linked URLs
 ```
 
-The opened folder defines the **search scope**, not the link's origin. Each
-link destination is relative to the Markdown file containing it, with special
-characters percent-encoded. Opening a higher-level folder therefore needs no
-migration; moving the entire project together also preserves its links. Agents
-can parse Markdown links, decode their paths, resolve them against the source
-file's directory, and traverse the graph without Write or a separate index.
-Existing references also open when the source file is opened on its own.
-Moving or renaming individual files externally requires updating their links,
-just as with ordinary Markdown links.
+**Click a link to follow it**; Option-click places the editing caret inside it
+instead. Links to Markdown or images open in a tab (or focus the tab already
+showing them); web addresses open in your browser; files Write cannot display
+are handed to the system. A `#fragment` scrolls to its heading, and matches
+either spelling — `#My Heading` (Obsidian) or `#my-heading` (GitHub).
+
+**Markdown destinations are paths**, resolved relative to the file containing
+the link, with special characters percent-encoded — exactly how GitHub renders
+them. The opened folder defines the **search scope**, not the link's origin, so
+opening a higher-level folder needs no migration and moving a whole project
+preserves its links. Agents can parse these links, decode their paths, resolve
+them against the source file's directory, and traverse the graph without Write
+or a separate index.
+
+**Wiki-link targets are note names**, resolved against the open folder: a bare
+`[[Design]]` finds `Design.md` anywhere in the workspace, preferring the copy
+nearest the linking document, and a target containing a slash is a path
+(relative to the note, then to the workspace root). The `.md` extension is
+optional. Without a folder open, wiki links look beside the file itself. A wiki
+link that names nothing is drawn dimmed with a dotted underline and does not
+navigate, so broken links are visible rather than silently dead.
+
+Moving or renaming individual files externally requires updating Markdown link
+paths, just as with ordinary Markdown; wiki links by name survive a move within
+the workspace.
 
 ## Shortcuts
 
@@ -125,6 +153,7 @@ just as with ordinary Markdown links.
 | --- | --- |
 | ⌘B / ⌘I / ⌘E | bold / italic / inline code (wraps selection or word at caret) |
 | ⌘K | insert link |
+| @ / `[[` | reference another file (Markdown link / wiki link) |
 | ⌘1–⌘6, ⌘0 | set / clear heading level |
 | ⌘= / ⌘− | bigger / smaller text |
 | ⌘N ⌘T ⌘O ⌘S ⇧⌘S | new window / new tab / open / save / save as |
